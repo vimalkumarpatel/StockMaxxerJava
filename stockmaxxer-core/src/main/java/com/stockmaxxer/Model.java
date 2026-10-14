@@ -33,7 +33,9 @@ public final class Model {
     public record PortfolioDetail(Portfolio portfolio, List<Position> holdings, BigDecimal nav, BigDecimal cashWeight,
                                   LocalDate navDate) {}
 
-    public record Line(String symbol, BigDecimal priorWeight, BigDecimal targetWeight, int severity, String action) {}
+    /** One line of a recommendation, with a 2-3 sentence plain-language explanation. */
+    public record Line(String symbol, BigDecimal priorWeight, BigDecimal targetWeight, int severity, String action,
+                       String explanation) {}
 
     public record Decision(long id, long portfolioId, LocalDate asOf, String engine, Status status,
                            BigDecimal nav, LocalDate fillDate, List<Line> lines) {}

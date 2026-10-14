@@ -42,6 +42,30 @@ PROPOSED ──accept──► ACCEPTED ──next open (settle job)──► FI
    └──the day ends────► EXPIRED
 ```
 
+## Explanations
+
+Every line of a recommendation, CASH included, carries a 2–3 sentence explanation for a reader who is
+not a specialist. The UI shows it in the **Explanation** column. Each explanation says:
+
+1. Why the stock is in or out of the top 8: its rank among the 12 stocks for price change over the
+   last 20 trading days.
+2. Why its part of the portfolio has that size: its price moves less or more than the other top
+   stocks, it's at the 15% limit, or a *simulated* risk check trimmed it.
+3. What the system does: buys, buys more, sells some, sells all, or holds.
+
+For example: *"SYN04 is number 5 of 12 stocks for price change in the last 20 trading days (+14.4%),
+so it is in the top 8. Its price moves less each day than most of the other top stocks, so it gets a
+larger part. The system buys more: its part changes from 13.72% to 13.75%."*
+
+- **Writing rules:** explanations follow the [ASD-STE100](https://www.asd-ste100.org/) (Simplified
+  Technical English) writing rules: at most 25 words in a sentence, active voice, one idea in a
+  sentence, simple words. A test enforces the sentence count, the sentence length and no contractions.
+  The STE dictionary of approved words isn't checked by a tool.
+- **Where they come from:** they're built from fixed templates, using the same numbers as the
+  recommendation itself. So they can't disagree with the trade, and they need no LLM or API key.
+- **Older databases:** recommendations made before explanations existed get them filled in once, at
+  startup, by recalculating each recommendation on its own date.
+
 ## Holdings, lots and cash
 
 - **Every buy is a lot:** the day, the number of shares, and the price paid per share (that day's open).
@@ -91,7 +115,7 @@ strings so they stay exact.
 | DELETE | `/portfolios/{id}` | archive (soft delete) |
 | POST | `/portfolios/{id}/restore` | un-archive |
 | POST | `/portfolios/{id}/recommendations` | generate today's recommendation now |
-| GET | `/portfolios/{id}/decisions` | recommendations, newest first, with their lines |
+| GET | `/portfolios/{id}/decisions` | Recommendations, newest first, with their lines. Each line has its prior and target weight, the action, the (simulated) severity and a plain-language `explanation` |
 | POST | `/portfolios/{id}/decisions/{decisionId}/accept` / `ignore` | |
 | GET | `/portfolios/{id}/equity` | NAV per day next to the benchmark, rebased to the deposit |
 | GET | `/benchmarks` | The benchmarks a portfolio can be compared against, i.e. the allowed values for `benchmark` when creating one (the UI's Benchmark dropdown). Example: `["SPY","QQQ","IWM","DIA"]` |
@@ -123,6 +147,7 @@ Errors return `{"error": "..."}`:
 | Beta / alpha / IR against the benchmark | Equity table with the benchmark rebased to the deposit | Shows the chosen benchmark with no statistics code |
 | A look-ahead guard | Future bars don't exist until the `prices` job writes them | Point-in-time holds by construction |
 | `archived_at` timestamp | An `archived` flag | Nothing reads the time |
+| LLM-written narratives (the original's one-sentence framing per position) | Fixed-template explanations (see [Explanations](#explanations)) | Every number comes from the decision itself, so an explanation can't disagree with the trade, and no API key is needed |
 | Choosing which lot to sell, tax rules (short vs long term, wash sales) | **FIFO lots**: every sale takes the oldest lot first (see [Holdings, lots and cash](#holdings-lots-and-cash)) | FIFO is the common default and the simplest order to apply; HIFO or LIFO would only change which lot is sold first |
 
 **Kept from the original design:**

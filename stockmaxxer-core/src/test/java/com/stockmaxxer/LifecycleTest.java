@@ -145,6 +145,40 @@ class LifecycleTest {
     }
 
     @Test
+    void everyLineHasAShortPlainLanguageExplanation() {
+        Portfolio p = portfolios.create("Explain", null, null, null);   // quant_llm
+        portfolios.accept(p.id(), portfolios.propose(p.id()).id());
+        TestDb.nightly(world);                                          // fills, then proposes a rebalance
+        TestDb.nightly(world);
+        for (Decision d : portfolios.decisions(p.id())) {
+            for (Line line : d.lines()) {
+                String[] sentences = line.explanation().split("(?<=\\.)\\s+");
+                assertThat(sentences.length).as(line.explanation()).isBetween(2, 3);
+                for (String sentence : sentences) {
+                    // ASD-STE100: at most 25 words in a descriptive sentence.
+                    assertThat(sentence.split("\\s+").length).as(sentence).isLessThanOrEqualTo(25);
+                }
+                assertThat(line.explanation()).as("no contractions").doesNotContain("'");
+            }
+            assertThat(d.lines()).filteredOn(l -> l.symbol().equals(Engines.CASH))
+                    .singleElement().extracting(Line::explanation).asString().startsWith("Cash is the money");
+        }
+    }
+
+    @Test
+    void aDatabaseFromBeforeExplanationsWereStoredGetsThemWritten() {
+        Portfolio p = portfolios.create("Explain", null, null, null);
+        Decision before = portfolios.propose(p.id());
+
+        world.db().sql("ALTER TABLE decision_lines DROP COLUMN explanation").update();   // an older database
+        portfolios.migrate();
+        portfolios.migrate();                                                             // a second start does nothing
+
+        assertThat(portfolios.decision(before.id()).lines()).extracting(Line::explanation)
+                .isEqualTo(before.lines().stream().map(Line::explanation).toList());
+    }
+
+    @Test
     void anIgnoredRecommendationLeavesThePortfolioUnchanged() {
         Portfolio p = portfolios.create("Ignore", null, null, null);
         Decision d = portfolios.propose(p.id());

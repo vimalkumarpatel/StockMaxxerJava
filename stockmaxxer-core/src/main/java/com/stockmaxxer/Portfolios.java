@@ -166,10 +166,12 @@ public class Portfolios {
                 BigDecimal from = prior.getOrDefault(symbol, BigDecimal.ZERO);
                 BigDecimal to = target.weights().getOrDefault(symbol, BigDecimal.ZERO);
                 db.sql("""
-                        INSERT INTO decision_lines (decision_id, symbol, prior_weight, target_weight, severity, action)
-                        VALUES (?, ?, ?, ?, ?, ?)""")
+                        INSERT INTO decision_lines
+                          (decision_id, symbol, prior_weight, target_weight, severity, action, explanation)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""")
                         .params(newId, symbol, from.toPlainString(), to.toPlainString(),
-                                target.severity().getOrDefault(symbol, 0), action(symbol, from, to))
+                                target.severity().getOrDefault(symbol, 0), action(symbol, from, to),
+                                Explanations.explain(symbol, from, to, target))
                         .update();
             }
             return newId;
@@ -218,7 +220,8 @@ public class Portfolios {
     public Decision decision(long id) {
         List<Line> lines = db.sql("SELECT * FROM decision_lines WHERE decision_id = ? ORDER BY symbol").param(id)
                 .query((rs, row) -> new Line(rs.getString("symbol"), dec(rs, "prior_weight"),
-                        dec(rs, "target_weight"), rs.getInt("severity"), rs.getString("action")))
+                        dec(rs, "target_weight"), rs.getInt("severity"), rs.getString("action"),
+                        rs.getString("explanation")))
                 .list();
         return db.sql("SELECT * FROM decisions WHERE id = ?").param(id)
                 .query((rs, row) -> new Decision(rs.getLong("id"), rs.getLong("portfolio_id"),
@@ -343,12 +346,46 @@ public class Portfolios {
     }
 
     /**
-     * One-time migration for a database from before lots were recorded (one holdings row per symbol):
-     * rebuilds every portfolio's lots by replaying its fills through {@link #rebalance}, then drops the
-     * superseded holdings table. It does nothing once lots exist, and can be deleted when no such
-     * database is left.
+     * One-time migrations for databases created by earlier versions. Each does nothing once applied. The
+     * explanation column comes first, because reading a decision needs it.
      */
     @PostConstruct
+    void migrate() {
+        addExplanations();
+        buildLotsFromFills();
+    }
+
+    /**
+     * For a database from before explanations were stored: adds the column and writes each line's
+     * explanation by recomputing its decision's engine output on its own date. That is exact, because
+     * prices up to that date never change. Can be deleted when no such database is left.
+     */
+    void addExplanations() {
+        int present = db.sql("SELECT COUNT(*) FROM pragma_table_info('decision_lines') WHERE name = 'explanation'")
+                .query(Integer.class).single();
+        if (present > 0) {
+            return;
+        }
+        tx.executeWithoutResult(status -> {
+            db.sql("ALTER TABLE decision_lines ADD COLUMN explanation TEXT NOT NULL DEFAULT ''").update();
+            for (long id : db.sql("SELECT id FROM decisions ORDER BY id").query(Long.class).list()) {
+                Decision d = decision(id);
+                Engines.Target target = Engines.target(d.engine(), d.asOf(), market);
+                for (Line line : d.lines()) {
+                    db.sql("UPDATE decision_lines SET explanation = ? WHERE decision_id = ? AND symbol = ?")
+                            .params(Explanations.explain(line.symbol(), line.priorWeight(), line.targetWeight(), target),
+                                    id, line.symbol())
+                            .update();
+                }
+            }
+        });
+    }
+
+    /**
+     * For a database from before lots were recorded (one holdings row per symbol): rebuilds every
+     * portfolio's lots by replaying its fills through {@link #rebalance}, then drops the superseded
+     * holdings table. It does nothing once lots exist, and can be deleted when no such database is left.
+     */
     void buildLotsFromFills() {
         boolean noLots = db.sql("SELECT COUNT(*) FROM lots").query(Integer.class).single() == 0;
         boolean anyFills = db.sql("SELECT COUNT(*) FROM decisions WHERE status = 'FILLED'").query(Integer.class).single() > 0;

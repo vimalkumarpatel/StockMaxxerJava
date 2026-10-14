@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 
 -- Includes a CASH line, so the target weights of one decision sum to exactly 1.
+-- explanation is 2-3 plain-language sentences about the line (ASD-STE100 writing rules).
 CREATE TABLE IF NOT EXISTS decision_lines (
   decision_id   INTEGER NOT NULL REFERENCES decisions (id),
   symbol        TEXT NOT NULL,
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS decision_lines (
   target_weight TEXT NOT NULL,
   severity      INTEGER NOT NULL,
   action        TEXT NOT NULL,
+  explanation   TEXT NOT NULL,
   PRIMARY KEY (decision_id, symbol)
 );
 

@@ -363,14 +363,14 @@ function DecisionCard({ d, onDecide }) {
         <thead>
           <tr>
             <th>Symbol</th><th>Current</th><th>Target</th><th>Action</th>
-            <th>{d.engine === 'quant_llm' ? 'Severity (simulated)' : ''}</th>
+            <th>{d.engine === 'quant_llm' ? 'Severity (simulated)' : ''}</th><th>Explanation</th>
           </tr>
         </thead>
         <tbody>
           {d.lines.map((l) => (
             <tr key={l.symbol}>
               <td>{l.symbol}</td><td>{pct(l.priorWeight)}</td><td>{pct(l.targetWeight)}</td><td>{l.action}</td>
-              <td>{l.severity || ''}</td>
+              <td>{l.severity || ''}</td><td className="why">{l.explanation}</td>
             </tr>
           ))}
         </tbody>

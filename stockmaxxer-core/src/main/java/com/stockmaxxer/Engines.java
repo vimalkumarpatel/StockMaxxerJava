@@ -11,7 +11,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import com.stockmaxxer.Model.EngineInfo;
 
@@ -40,8 +42,22 @@ public final class Engines {
     static final int WEIGHT_SCALE = 6;
     static final MathContext MC = MathContext.DECIMAL64;
 
-    /** Target weights by symbol, including CASH, and the severity behind each trim. */
-    public record Target(Map<String, BigDecimal> weights, Map<String, Integer> severity) {}
+    /** One stock's 20-day price change and its daily price movement (standard deviation of daily returns). */
+    public record Stat(String symbol, BigDecimal momentum, BigDecimal vol) {}
+
+    /**
+     * Target weights by symbol, including CASH, plus the facts behind them that the explanations use:
+     * every eligible stock ranked by 20-day price change, the names held at the 15% cap, the severity
+     * behind each trim, and the scale applied to the trims when the cash cap bound (1 if it didn't).
+     */
+    public record Target(Map<String, BigDecimal> weights, Map<String, Integer> severity, List<Stat> ranked,
+                         Set<String> capped, BigDecimal trimScale) {}
+
+    /** quant_only's weights (without CASH), the ranking they came from, and the names pinned at the cap. */
+    record Base(Map<String, BigDecimal> weights, List<Stat> ranked, Set<String> capped) {}
+
+    /** Final weights including CASH, the severity behind each trim, and the trim scale. */
+    record Weights(Map<String, BigDecimal> weights, Map<String, Integer> severity, BigDecimal trimScale) {}
 
     private Engines() {}
 
@@ -50,17 +66,17 @@ public final class Engines {
     }
 
     public static Target target(String engine, LocalDate asOf, Market market) {
-        Map<String, BigDecimal> base = quantOnly(asOf, market);
-        return switch (engine) {
-            case QUANT_ONLY -> withCash(base, Map.of());
-            case QUANT_LLM -> trimmed(base, asOf);
+        Base base = quantOnly(asOf, market);
+        Weights w = switch (engine) {
+            case QUANT_ONLY -> withCash(base.weights(), Map.of(), BigDecimal.ONE);
+            case QUANT_LLM -> trimmed(base.weights(), asOf);
             default -> throw new IllegalArgumentException("unknown engine: " + engine);
         };
+        return new Target(w.weights(), w.severity(), base.ranked(), base.capped(), w.trimScale());
     }
 
     /** Rank by 20-day return, keep the top 8, weight each in proportion to 1/volatility, scaled to 0.98, capped at 15%. */
-    static Map<String, BigDecimal> quantOnly(LocalDate asOf, Market market) {
-        record Stat(String symbol, BigDecimal momentum, BigDecimal vol) {}
+    static Base quantOnly(LocalDate asOf, Market market) {
         List<Stat> stats = new ArrayList<>();
         for (String symbol : Market.UNIVERSE) {
             List<BigDecimal> closes = market.closes(symbol, asOf, LOOKBACK + 1);
@@ -74,10 +90,11 @@ public final class Engines {
             BigDecimal momentum = closes.getLast().divide(closes.getFirst(), MC).subtract(BigDecimal.ONE);
             stats.add(new Stat(symbol, momentum, stdev(returns)));
         }
-        List<Stat> top = stats.stream()
+        List<Stat> ranked = stats.stream()
                 .sorted(Comparator.comparing(Stat::momentum).reversed().thenComparing(Stat::symbol))
-                .limit(TOP_N)
                 .toList();
+        List<Stat> top = ranked.stream().limit(TOP_N).toList();
+        Set<String> capped = new TreeSet<>();
         Map<String, BigDecimal> inverse = new TreeMap<>();
         for (Stat s : top) {
             inverse.put(s.symbol(), BigDecimal.ONE.divide(s.vol(), MC));
@@ -100,10 +117,11 @@ public final class Engines {
                     weights.put(e.getKey(), left.multiply(e.getValue()).divide(total, MC)
                             .setScale(WEIGHT_SCALE, RoundingMode.DOWN));
                 }
-                return weights;
+                return new Base(weights, ranked, capped);
             }
             for (String s : over) {
                 weights.put(s, NAME_CAP);
+                capped.add(s);
                 budget = budget.subtract(NAME_CAP);
             }
         }
@@ -123,7 +141,7 @@ public final class Engines {
      * a trim can only lower a weight, trimmed weight becomes cash, and cash is capped at 15% by scaling
      * every trim down pro-rata.
      */
-    static Target trimmed(Map<String, BigDecimal> base, LocalDate asOf) {
+    static Weights trimmed(Map<String, BigDecimal> base, LocalDate asOf) {
         Map<String, Integer> severity = new TreeMap<>();
         Map<String, BigDecimal> trim = new TreeMap<>();
         for (var e : base.entrySet()) {
@@ -142,7 +160,7 @@ public final class Engines {
             // rounding dust from pushing cash past the cap.
             weights.put(e.getKey(), w.setScale(WEIGHT_SCALE, RoundingMode.UP));
         }
-        return withCash(weights, severity);
+        return withCash(weights, severity, scale);
     }
 
     static int simulatedSeverity(String symbol, LocalDate asOf) {
@@ -151,10 +169,10 @@ public final class Engines {
     }
 
     /** Cash is the residual, so the weights including CASH sum to exactly 1 by construction. */
-    static Target withCash(Map<String, BigDecimal> weights, Map<String, Integer> severity) {
+    static Weights withCash(Map<String, BigDecimal> weights, Map<String, Integer> severity, BigDecimal trimScale) {
         Map<String, BigDecimal> all = new TreeMap<>(weights);
         all.put(CASH, BigDecimal.ONE.subtract(sum(weights.values())));
-        return new Target(all, severity);
+        return new Weights(all, severity, trimScale);
     }
 
     static BigDecimal sum(Collection<BigDecimal> xs) {
