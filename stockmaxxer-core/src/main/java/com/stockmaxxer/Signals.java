@@ -18,8 +18,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class Signals {
 
-    /** Why a stock is trimmed: the severity, and the filing and sentence behind it. */
-    public record Flag(int severity, String accession, String form, LocalDate filedOn, String quote) {}
+    /** Why a stock is trimmed: the severity, the filing and sentence behind it, and the cached answer it came from. */
+    public record Flag(int severity, String accession, String form, LocalDate filedOn, String quote,
+                       String llmKey, String llmModel) {}
 
     private record Filing(String accession, String symbol, String form, LocalDate filedOn, String item1a) {}
 
@@ -108,7 +109,7 @@ public class Signals {
         Map<String, Flag> flags = new TreeMap<>();
         for (String symbol : symbols) {
             db.sql("""
-                            SELECT f.accession, f.form, f.filed_on, e.severity, e.quote
+                            SELECT f.accession, f.form, f.filed_on, e.severity, e.quote, f.llm_key, f.llm_model
                             FROM filings f JOIN events e ON e.accession = f.accession
                             WHERE f.accession = (SELECT accession FROM filings WHERE symbol = ? AND scored = 1 AND filed_on < ?
                                                  ORDER BY filed_on DESC, accession DESC LIMIT 1)
@@ -116,10 +117,27 @@ public class Signals {
                             ORDER BY e.severity DESC, e.n LIMIT 1""")
                     .params(symbol, asOf.toString())
                     .query((rs, row) -> new Flag(rs.getInt("severity"), rs.getString("accession"), rs.getString("form"),
-                            LocalDate.parse(rs.getString("filed_on")), rs.getString("quote")))
+                            LocalDate.parse(rs.getString("filed_on")), rs.getString("quote"),
+                            rs.getString("llm_key"), rs.getString("llm_model")))
                     .optional()
                     .ifPresent(flag -> flags.put(symbol, flag));
         }
         return flags;
+    }
+
+    /** For the audit: how many quotes failed verification in each stock's latest scored filing before asOf. */
+    public Map<String, Integer> dropped(List<String> symbols, LocalDate asOf) {
+        Map<String, Integer> dropped = new TreeMap<>();
+        for (String symbol : symbols) {
+            int n = db.sql("""
+                            SELECT COUNT(*) FROM events WHERE verified = 0 AND accession =
+                              (SELECT accession FROM filings WHERE symbol = ? AND scored = 1 AND filed_on < ?
+                               ORDER BY filed_on DESC, accession DESC LIMIT 1)""")
+                    .params(symbol, asOf.toString()).query(Integer.class).single();
+            if (n > 0) {
+                dropped.put(symbol, n);
+            }
+        }
+        return dropped;
     }
 }

@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -42,12 +43,14 @@ public class Portfolios {
     private final JdbcClient db;
     private final Market market;
     private final Signals signals;
+    private final Audit audit;
     private final TransactionTemplate tx;
 
-    public Portfolios(JdbcClient db, Market market, Signals signals, TransactionTemplate tx) {
+    public Portfolios(JdbcClient db, Market market, Signals signals, Audit audit, TransactionTemplate tx) {
         this.db = db;
         this.market = market;
         this.signals = signals;
+        this.audit = audit;
         this.tx = tx;
     }
 
@@ -176,6 +179,7 @@ public class Portfolios {
                                 target.flags().containsKey(symbol) ? target.flags().get(symbol).quote() : null)
                         .update();
             }
+            audit.record(newId, today, Status.PROPOSED.name(), proposed(p, nav, prior, target, universe, today));
             return newId;
         });
         return decision(decisionId);
@@ -206,10 +210,21 @@ public class Portfolios {
             throw new IllegalStateException("decision " + decisionId
                     + " has expired: a recommendation must be accepted on the day it is made");
         }
-        db.sql("UPDATE decisions SET status = ? WHERE id = ? AND status = 'PROPOSED'")
-                .params(to.name(), decisionId)
-                .update();
+        tx.executeWithoutResult(status -> {
+            db.sql("UPDATE decisions SET status = ? WHERE id = ? AND status = 'PROPOSED'")
+                    .params(to.name(), decisionId)
+                    .update();
+            audit.record(decisionId, d.asOf(), to.name(), Map.of());
+        });
         return decision(decisionId);
+    }
+
+    /** One recommendation's audit trail, oldest first. */
+    public List<Audit.Entry> audit(long portfolioId, long decisionId) {
+        if (decision(decisionId).portfolioId() != portfolioId) {
+            throw new NoSuchElementException("no decision " + decisionId + " for portfolio " + portfolioId);
+        }
+        return audit.entries(decisionId);
     }
 
     public List<Decision> decisions(long portfolioId) {
@@ -237,12 +252,14 @@ public class Portfolios {
 
     /** The expire job: earlier days' proposals that nobody accepted. */
     public int expireAll() {
-        return db.sql("""
-                UPDATE decisions SET status = 'EXPIRED'
-                WHERE status = 'PROPOSED' AND as_of < ?
-                  AND portfolio_id IN (SELECT id FROM portfolios WHERE archived = 0)""")
-                .param(market.today().toString())
-                .update();
+        String today = market.today().toString();
+        String which = "status = 'PROPOSED' AND as_of < ? AND portfolio_id IN (SELECT id FROM portfolios WHERE archived = 0)";
+        return tx.execute(status -> {
+            // The audit rows first, while the rows still say PROPOSED.
+            db.sql("INSERT INTO audit (decision_id, day, kind, detail) SELECT id, ?, 'EXPIRED', '{}' FROM decisions WHERE " + which)
+                    .params(today, today).update();
+            return db.sql("UPDATE decisions SET status = 'EXPIRED' WHERE " + which).param(today).update();
+        });
     }
 
     /** The settle job: fill every accepted recommendation at today's open, the first open after it was accepted. */
@@ -261,12 +278,73 @@ public class Portfolios {
 
     private void settle(Decision d, LocalDate day) {
         Portfolio p = get(d.portfolioId());
+        List<Holding> before = holdings(p.id());
         Fill fill = rebalance(p.cash(), lots(p.id()), d, day);
         writeLots(p.id(), fill.lots());
         db.sql("UPDATE portfolios SET cash = ? WHERE id = ?").params(fill.cash().toPlainString(), p.id()).update();
         db.sql("UPDATE decisions SET status = 'FILLED', fill_date = ? WHERE id = ?")
                 .params(day.toString(), d.id())
                 .update();
+        audit.record(d.id(), day, Status.FILLED.name(), filled(before, holdings(p.id()), day, fill.cash()));
+    }
+
+    /** The audit detail of a proposal: everything needed to see why, and to compute it again. */
+    private Map<String, Object> proposed(Portfolio p, BigDecimal nav, Map<String, BigDecimal> prior,
+                                         Engines.Target target, List<String> universe, LocalDate today) {
+        Map<String, Object> flags = new TreeMap<>();
+        target.flags().forEach((symbol, f) -> flags.put(symbol, Map.of(
+                "severity", f.severity(), "accession", f.accession(), "form", f.form(),
+                "filedOn", f.filedOn().toString(), "quote", f.quote(),
+                "llmKey", String.valueOf(f.llmKey()), "llmModel", String.valueOf(f.llmModel()))));
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("engine", p.engine());
+        detail.put("benchmark", p.benchmark());
+        detail.put("universe", universe);
+        detail.put("promptVersion", Prompts.VERSION);
+        detail.put("inputsSha256", inputsHash(universe, today));
+        detail.put("nav", nav.toPlainString());
+        detail.put("priorWeights", plain(prior));
+        detail.put("targetWeights", plain(target.weights()));
+        detail.put("trimScale", target.trimScale().toPlainString());
+        detail.put("capped", target.capped());
+        detail.put("flags", flags);
+        detail.put("droppedQuotes", signals.dropped(universe, today));
+        return detail;
+    }
+
+    /** sha256 of every close the engine could read: each universe symbol's lookback window. */
+    private String inputsHash(List<String> universe, LocalDate today) {
+        StringBuilder all = new StringBuilder();
+        for (String symbol : universe) {
+            all.append(symbol).append(market.closes(symbol, today, Engines.LOOKBACK + 1)).append('\n');
+        }
+        return Llm.sha256(all.toString());
+    }
+
+    /** The audit detail of a fill: each trade at the open, and the cash after. */
+    private Map<String, Object> filled(List<Holding> before, List<Holding> after, LocalDate day, BigDecimal cash) {
+        Map<String, BigDecimal> from = new TreeMap<>();
+        before.forEach(h -> from.put(h.symbol(), h.shares()));
+        Map<String, BigDecimal> to = new TreeMap<>();
+        after.forEach(h -> to.put(h.symbol(), h.shares()));
+        Set<String> symbols = new TreeSet<>(from.keySet());
+        symbols.addAll(to.keySet());
+        List<Map<String, String>> trades = new ArrayList<>();
+        for (String symbol : symbols) {
+            BigDecimal change = to.getOrDefault(symbol, BigDecimal.ZERO).subtract(from.getOrDefault(symbol, BigDecimal.ZERO));
+            if (change.signum() != 0) {
+                trades.add(Map.of("symbol", symbol, "action", change.signum() > 0 ? "BUY" : "SELL",
+                        "shares", change.abs().toPlainString(),
+                        "price", market.bar(symbol, day).open().toPlainString()));
+            }
+        }
+        return Map.of("trades", trades, "cashAfter", cash.toPlainString());
+    }
+
+    private static Map<String, String> plain(Map<String, BigDecimal> weights) {
+        Map<String, String> result = new TreeMap<>();
+        weights.forEach((k, v) -> result.put(k, v.toPlainString()));
+        return result;
     }
 
     /** A portfolio after a fill: its cash and its lots. */

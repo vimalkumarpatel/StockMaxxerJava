@@ -167,6 +167,20 @@ QQQ (buy and hold)          1250.54   +25.05%        17.12%     0.00%
 - It also prints the quote verification rate and the share of industry-scope events (dropped).
 - With a few hundred filings, the numbers are **underpowered: no alpha claim**.
 
+## The audit trail
+
+Everything that happens to a recommendation adds one row to the `audit` table, in the same transaction as the
+change:
+
+| kind | detail (JSON) |
+|---|---|
+| `PROPOSED` | Engine, benchmark, universe, prompt version, a sha256 of every close the engine could read, NAV, prior and target weights including CASH, trim scale, the names at the 15% cap, each trim's filing and verified quote, its replay-cache key and the model that answered, and the dropped quotes in each stock's latest filing |
+| `ACCEPTED`, `IGNORED`, `EXPIRED` | Nothing more: the row itself records when |
+| `FILLED` | Each trade at the open (symbol, BUY or SELL, shares, price) and the cash after |
+
+The trail is **append-only**: two SQLite triggers reject any UPDATE or DELETE on `audit`. A test replays a
+proposal: it computes the target again from the same point-in-time inputs and gets the recorded weights.
+
 ## The nightly jobs
 
 Each job runs on its own: `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=<name>`.
@@ -204,6 +218,7 @@ strings so they stay exact.
 | POST | `/portfolios/{id}/recommendations` | generate today's recommendation now |
 | GET | `/portfolios/{id}/decisions` | Recommendations, newest first, with their lines. Each line has its prior and target weight, the action, the severity from the stock's latest filing, a plain-language `explanation`, and `quote`: the verified filing sentence behind a trim |
 | POST | `/portfolios/{id}/decisions/{decisionId}/accept` / `ignore` | |
+| GET | `/portfolios/{id}/decisions/{decisionId}/audit` | The recommendation's audit trail, oldest first (see [The audit trail](#the-audit-trail)) |
 | GET | `/portfolios/{id}/equity` | NAV per day next to the benchmark, rebased to the deposit |
 | GET | `/portfolios/{id}/forecast` | The forecast range: `{horizonDays: 63, p10, p50, p90, note}`. A 5-day block bootstrap (10,000 paths, fixed seed 42) of the holdings' daily returns over the last 252 revealed days, at today's weights; cash returns 0. It is **historical dispersion, not a prediction**, and the UI says so |
 | GET | `/benchmarks` | The benchmarks a portfolio can be compared against, i.e. the allowed values for `benchmark` when creating one (the UI's Benchmark dropdown). Example: `["SPY","QQQ","IWM","DIA"]` |
@@ -232,7 +247,9 @@ Errors return `{"error": "..."}`:
 | Acceptance time from the SGML header | EDGAR's filing date; a filing counts from the **next** day | Never too early, and no time zones |
 | Severity aggregation, absorbing severity 5, co-occurrence backstop | A stock's severity is the **highest firm-scope** severity in its **latest scored** filing; events the model calls industry-wide are dropped. No "5 stays until superseded", no time decay, no clustering of the same event across names | Short and explainable. As in the Python version, the max over ~10 events per filing is usually 4, so most held names are trimmed and the cash cap binds |
 | LLM refusal fallbacks | A refused or cut-off answer is not cached; that filing fails, the others go on, and the next run tries it again | No beta features. The job's error lists the filing |
-| Holdings snapshot per decision, audit records | Current holdings + cash; each decision keeps its prior and target weights | Enough to see what was proposed and what was applied |
+| Holdings snapshot per decision | Current lots + cash; the audit trail keeps each decision's prior and target weights and each fill's trades | Enough to see what was proposed and what was applied |
+| Raw prompt and response in the audit | Their replay-cache key and the model that answered; the answer itself is in `data/llm-cache/` | Keeps the database small |
+| An audit hash chain | Append-only by SQLite triggers | Tamper-evidence would answer a question nobody asked here |
 | Job watermark tables | Re-runnable SQL: `INSERT OR IGNORE`, status filters, one decision per portfolio per day | Safe re-runs without bookkeeping |
 | Spring Data JDBC repositories | Spring `JdbcClient` with plain SQL | Fewer lines than mapping composite keys and decimal converters |
 | 11 Maven modules | 3: `core`, `app`, `jobs` | Still separates the web app from the jobs; more modules split out as subsystems arrive |
@@ -255,8 +272,11 @@ Errors return `{"error": "..."}`:
 
 ## Not built yet
 
-These are covered by the long-term plan:
-- the audit trail
+From the long-term plan, still missing:
+- a universe screen (SIC codes, 10-K count, dollar volume) instead of the fixed lists
+- raw prices with corporate actions, and total returns
+- the co-occurrence backstop and a severity aggregation that does not saturate at 4
+- benchmark statistics (beta, alpha, information ratio)
 
 ## Layout
 

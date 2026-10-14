@@ -64,7 +64,7 @@ class EnginesTest {
     private static Map<String, Signals.Flag> flags(int day) {
         Map<String, Signals.Flag> flags = new TreeMap<>();
         for (int k = 0; k < SPY.size(); k++) {
-            flags.put(SPY.get(k), new Signals.Flag((k + day) % 6, "acc-" + k, "10-Q", LocalDate.of(2025, 11, 1), "A risk."));
+            flags.put(SPY.get(k), new Signals.Flag((k + day) % 6, "acc-" + k, "10-Q", LocalDate.of(2025, 11, 1), "A risk.", null, null));
         }
         return flags;
     }

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.stockmaxxer.Audit;
 import com.stockmaxxer.Engines;
 import com.stockmaxxer.Market;
 import com.stockmaxxer.Model;
@@ -92,6 +93,12 @@ public class Api {
     @PostMapping("/portfolios/{id}/decisions/{decisionId}/ignore")
     public Decision ignore(@PathVariable long id, @PathVariable long decisionId) {
         return portfolios.ignore(id, decisionId);
+    }
+
+    /** Everything that happened to one recommendation, oldest first: proposed (with why), accepted, filled, ... */
+    @GetMapping("/portfolios/{id}/decisions/{decisionId}/audit")
+    public List<Audit.Entry> audit(@PathVariable long id, @PathVariable long decisionId) {
+        return portfolios.audit(id, decisionId);
     }
 
     @GetMapping("/portfolios/{id}/equity")

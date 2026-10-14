@@ -117,3 +117,13 @@ CREATE TABLE IF NOT EXISTS events (
   verified  INTEGER NOT NULL,
   PRIMARY KEY (accession, n)
 );
+
+-- The audit trail: one row per thing that happened to a recommendation (PROPOSED, ACCEPTED, IGNORED, EXPIRED,
+-- FILLED), with a JSON detail. Append-only: triggers created by the Audit class reject UPDATE and DELETE.
+CREATE TABLE IF NOT EXISTS audit (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  decision_id INTEGER NOT NULL REFERENCES decisions (id),
+  day         TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  detail      TEXT NOT NULL
+);

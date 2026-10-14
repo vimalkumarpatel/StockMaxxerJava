@@ -42,7 +42,7 @@ final class TestDb {
         // Replay only, with the cache in the test's temp folder: a test can never call Claude.
         Llm llm = new Llm(dir.toString(), true, "test-model", "");
         Signals signals = new Signals(db, llm, tx);
-        return new World(db, market, signals, new Portfolios(db, market, signals, tx), llm);
+        return new World(db, market, signals, new Portfolios(db, market, signals, new Audit(db), tx), llm);
     }
 
     /** The market side of a night: a new simulated day and its bars. */
