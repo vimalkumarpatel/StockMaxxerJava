@@ -125,6 +125,21 @@ public class Signals {
         return flags;
     }
 
+    /**
+     * For the demo report: the filings that count from {@code day} on, i.e. filed on or after {@code previousDay}
+     * and before {@code day}, each with the highest verified firm-scope severity found in it.
+     */
+    public List<String> arrived(LocalDate previousDay, LocalDate day) {
+        return db.sql("""
+                        SELECT f.symbol || ' ' || f.form || ' filed ' || f.filed_on || ': ' ||
+                               CASE WHEN f.scored = 0 THEN 'not scored yet'
+                                    ELSE 'severity ' || COALESCE((SELECT MAX(severity) FROM events e WHERE e.accession = f.accession
+                                                                  AND e.scope = 'firm' AND e.verified = 1), 0) END
+                        FROM filings f WHERE f.filed_on >= ? AND f.filed_on < ? ORDER BY f.symbol""")
+                .params(previousDay.toString(), day.toString())
+                .query(String.class).list();
+    }
+
     /** For the audit: how many quotes failed verification in each stock's latest scored filing before asOf. */
     public Map<String, Integer> dropped(List<String> symbols, LocalDate asOf) {
         Map<String, Integer> dropped = new TreeMap<>();

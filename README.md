@@ -46,15 +46,31 @@ java -jar stockmaxxer-app/target/stockmaxxer-app.jar                # in a secon
 cd stockmaxxer-ui && npm run dev                                    # in a third; open http://localhost:3000
 ```
 
-In the UI, create the portfolios the story needs. Two on the **same benchmark** with different engines tell
-the A/B story; for example, "QQQ with Claude" (`quant_llm`) and "QQQ quant only" (`quant_only`). Add a third
-on another benchmark, such as DIA. Then stop the app and keep a copy of the database to reset to:
-`cp data/stockmaxxer.sqlite data/demo.sqlite`.
+In the UI, create the portfolios the story needs:
+- Two on the **same benchmark** with different engines tell the A/B story; for example, "QQQ with Claude"
+  (`quant_llm`) and "QQQ quant only" (`quant_only`).
+- A third on another benchmark, such as DIA.
+
+Accept their first recommendations, then move to just before the filing season. Most 10-Ks arrive from late
+January to the end of February, so a demo that starts there shows new filings changing the trims:
+
+```bash
+for i in $(seq 1 15); do scripts/nightly.sh; done          # 2026-01-02 → about 2026-01-26
+```
+
+Then stop the app and keep a copy of the database to reset to. SQLite keeps recent writes in `-wal` and `-shm`
+files next to the database, so copy only while nothing has it open:
+
+```bash
+cp data/stockmaxxer.sqlite data/demo.sqlite
+```
 
 **2. Run it:**
 
 ```bash
-cp data/demo.sqlite data/stockmaxxer.sqlite      # back to the prepared start
+# with the app stopped: back to the prepared start
+rm -f data/stockmaxxer.sqlite-wal data/stockmaxxer.sqlite-shm
+cp data/demo.sqlite data/stockmaxxer.sqlite
 java -jar stockmaxxer-app/target/stockmaxxer-app.jar &
 scripts/demo.sh 10 5                             # 10 trading days, 5 seconds apart
 ```
@@ -68,7 +84,10 @@ night's jobs:
 - `report`: prints the day.
 
 ```
-======== 2026-01-07 ========
+======== 2026-02-02 ========
+new filing: AAPL 10-Q filed 2026-01-30: severity 0
+new filing: V 10-Q filed 2026-01-30: severity 0
+
 QQQ with Claude (quant_llm, QQQ)
   filled at today's open: SELL 0.051523 AMD @ 212.1300; ... BUY 1.308971 WMT @ 114.1900;
   NAV $998.12, cash 6.50% | QQQ from the same start: $1017.78
@@ -80,6 +99,8 @@ QQQ with Claude (quant_llm, QQQ)
 **3. What to point at:**
 
 - **Point-in-time:** "Day D's prices are revealed only now; nothing from D+1 exists yet."
+- **Fetching:** "A 10-K filed yesterday counts from today." The report's `new filing:` lines show each
+  filing on the day it starts to count.
 - **The signal:** "NVDA's 10-Q adds a level-4 risk. Here is the exact sentence, checked word for word against the
   stored filing." It shows under the line's explanation in the UI, and in the report.
 - **Trim-only:** "Claude can only make a part smaller. The trimmed part becomes cash, and cash stops at 15%."

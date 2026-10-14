@@ -18,6 +18,7 @@ import com.stockmaxxer.Model.Line;
 import com.stockmaxxer.Model.Portfolio;
 import com.stockmaxxer.Model.PortfolioDetail;
 import com.stockmaxxer.Portfolios;
+import com.stockmaxxer.Signals;
 
 /**
  * The report job, for demos: what happened today in every active portfolio, as plain text. It only reads,
@@ -29,15 +30,23 @@ public class Report {
 
     private final Market market;
     private final Portfolios portfolios;
+    private final Signals signals;
 
-    public Report(Market market, Portfolios portfolios) {
+    public Report(Market market, Portfolios portfolios, Signals signals) {
         this.market = market;
         this.portfolios = portfolios;
+        this.signals = signals;
     }
 
     public String today() {
         LocalDate today = market.today();
         StringBuilder out = new StringBuilder("\n======== " + today + " ========\n");
+        // The filings that count from today: filed since the previous trading day.
+        List<LocalDate> recent = market.tradingDays(today.minusDays(10), today);
+        LocalDate previous = recent.size() > 1 ? recent.get(recent.size() - 2) : today;
+        for (String filing : signals.arrived(previous, today)) {
+            out.append("new filing: ").append(filing).append("\n");
+        }
         for (Portfolio p : portfolios.list(false)) {
             out.append("\n").append(p.name()).append(" (").append(p.engine()).append(", ").append(p.benchmark()).append(")\n");
             List<Decision> decisions = portfolios.decisions(p.id());

@@ -144,6 +144,26 @@ class LifecycleTest {
     }
 
     @Test
+    void theTrimSentenceFollowsTheSameWritingRules() {
+        LocalDate today = market.today();
+        List<String> spy = Market.UNIVERSES.get("SPY");
+        Map<String, Signals.Flag> flags = new java.util.TreeMap<>();
+        for (String s : spy) {
+            flags.put(s, new Signals.Flag(4, "acc", "10-Q", LocalDate.of(2025, 11, 19), "A risk.", null, null));
+        }
+        Engines.Target t = Engines.target(Engines.QUANT_LLM, today, market, spy, flags);
+        String held = t.flags().keySet().iterator().next();
+        String explanation = Explanations.explain(held, BigDecimal.ZERO, t.weights().get(held), t);
+        assertThat(explanation).contains("Its 10-Q of 2025-11-19 adds a risk at level 4 of 5");
+        String[] sentences = explanation.split("(?<=\\.)\\s+");
+        assertThat(sentences.length).isBetween(2, 3);
+        for (String sentence : sentences) {
+            assertThat(sentence.split("\\s+").length).as(sentence).isLessThanOrEqualTo(25);
+        }
+        assertThat(explanation).doesNotContain("'");
+    }
+
+    @Test
     void anIgnoredRecommendationLeavesThePortfolioUnchanged() {
         Portfolio p = portfolios.create("Ignore", null, null, null);
         Decision d = portfolios.propose(p.id());

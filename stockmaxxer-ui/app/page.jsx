@@ -98,8 +98,9 @@ export default function Home() {
   };
 
   // Reload every 5 seconds, so the page follows scripts/demo.sh (or the nightly jobs) without a manual reload.
+  // Not through guarded(): that clears the error message, and an Accept error must stay on screen.
   useEffect(() => {
-    const timer = setInterval(() => guarded(refresh)(), 5000);
+    const timer = setInterval(() => refresh().catch((e) => setError(e.message)), 5000);
     return () => clearInterval(timer);
   });
 
