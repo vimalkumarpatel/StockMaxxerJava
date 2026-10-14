@@ -63,8 +63,6 @@ larger part. The system buys more: its part changes from 13.72% to 13.75%."*
   The STE dictionary of approved words isn't checked by a tool.
 - **Where they come from:** they're built from fixed templates, using the same numbers as the
   recommendation itself. So they can't disagree with the trade, and they need no LLM or API key.
-- **Older databases:** recommendations made before explanations existed get them filled in once, at
-  startup, by recalculating each recommendation on its own date.
 
 ## Holdings, lots and cash
 

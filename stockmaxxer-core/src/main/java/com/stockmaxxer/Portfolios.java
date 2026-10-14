@@ -13,8 +13,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
-import jakarta.annotation.PostConstruct;
-
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -345,70 +343,6 @@ public class Portfolios {
         }
     }
 
-    /**
-     * One-time migrations for databases created by earlier versions. Each does nothing once applied. The
-     * explanation column comes first, because reading a decision needs it.
-     */
-    @PostConstruct
-    void migrate() {
-        addExplanations();
-        buildLotsFromFills();
-    }
-
-    /**
-     * For a database from before explanations were stored: adds the column and writes each line's
-     * explanation by recomputing its decision's engine output on its own date. That is exact, because
-     * prices up to that date never change. Can be deleted when no such database is left.
-     */
-    void addExplanations() {
-        int present = db.sql("SELECT COUNT(*) FROM pragma_table_info('decision_lines') WHERE name = 'explanation'")
-                .query(Integer.class).single();
-        if (present > 0) {
-            return;
-        }
-        tx.executeWithoutResult(status -> {
-            db.sql("ALTER TABLE decision_lines ADD COLUMN explanation TEXT NOT NULL DEFAULT ''").update();
-            for (long id : db.sql("SELECT id FROM decisions ORDER BY id").query(Long.class).list()) {
-                Decision d = decision(id);
-                Engines.Target target = Engines.target(d.engine(), d.asOf(), market);
-                for (Line line : d.lines()) {
-                    db.sql("UPDATE decision_lines SET explanation = ? WHERE decision_id = ? AND symbol = ?")
-                            .params(Explanations.explain(line.symbol(), line.priorWeight(), line.targetWeight(), target),
-                                    id, line.symbol())
-                            .update();
-                }
-            }
-        });
-    }
-
-    /**
-     * For a database from before lots were recorded (one holdings row per symbol): rebuilds every
-     * portfolio's lots by replaying its fills through {@link #rebalance}, then drops the superseded
-     * holdings table. It does nothing once lots exist, and can be deleted when no such database is left.
-     */
-    void buildLotsFromFills() {
-        boolean noLots = db.sql("SELECT COUNT(*) FROM lots").query(Integer.class).single() == 0;
-        boolean anyFills = db.sql("SELECT COUNT(*) FROM decisions WHERE status = 'FILLED'").query(Integer.class).single() > 0;
-        if (!noLots || !anyFills) {
-            return;
-        }
-        tx.executeWithoutResult(status -> {
-            for (Portfolio p : list(true)) {
-                Fill fill = new Fill(p.initialDeposit(), List.of());
-                List<Long> filled = db.sql("""
-                        SELECT id FROM decisions WHERE portfolio_id = ? AND status = 'FILLED'
-                        ORDER BY fill_date, id""")
-                        .param(p.id()).query(Long.class).list();
-                for (long id : filled) {
-                    Decision d = decision(id);
-                    fill = rebalance(fill.cash(), fill.lots(), d, d.fillDate());
-                }
-                writeLots(p.id(), fill.lots());
-            }
-            db.sql("DROP TABLE IF EXISTS holdings").update();
-        });
-    }
-
     /** The mark job: value every active portfolio at today's close, one point on its equity curve. */
     public int markAll() {
         LocalDate today = market.today();
@@ -478,7 +412,7 @@ public class Portfolios {
     }
 
     /** A portfolio's lots, oldest first within each symbol. */
-    List<Lot> lots(long portfolioId) {
+    private List<Lot> lots(long portfolioId) {
         return db.sql("SELECT symbol, acquired_on, shares, price FROM lots WHERE portfolio_id = ? ORDER BY symbol, acquired_on")
                 .param(portfolioId)
                 .query((rs, row) -> new Lot(rs.getString("symbol"), LocalDate.parse(rs.getString("acquired_on")),

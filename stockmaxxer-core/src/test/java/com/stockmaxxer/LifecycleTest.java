@@ -18,7 +18,6 @@ import org.junit.jupiter.api.io.TempDir;
 import com.stockmaxxer.Model.Decision;
 import com.stockmaxxer.Model.EquityPoint;
 import com.stockmaxxer.Model.Line;
-import com.stockmaxxer.Model.Lot;
 import com.stockmaxxer.Model.Portfolio;
 import com.stockmaxxer.Model.PortfolioDetail;
 import com.stockmaxxer.Model.Position;
@@ -124,27 +123,6 @@ class LifecycleTest {
     }
 
     @Test
-    void aDatabaseFromBeforeLotsWereRecordedIsRebuiltFromItsFills() {
-        Portfolio p = portfolios.create("Old", null, null, Engines.QUANT_ONLY);
-        portfolios.accept(p.id(), portfolios.propose(p.id()).id());
-        TestDb.nightly(world);                                                  // first fill
-        portfolios.accept(p.id(), portfolios.decisions(p.id()).getFirst().id());
-        TestDb.nightly(world);                                                  // second fill rebalances
-        List<Lot> recorded = portfolios.lots(p.id());
-        assertThat(recorded).isNotEmpty();
-
-        // What an older database looks like: no lots, and a holdings table instead.
-        world.db().sql("DELETE FROM lots").update();
-        world.db().sql("CREATE TABLE holdings (portfolio_id INTEGER, symbol TEXT, shares TEXT)").update();
-        portfolios.buildLotsFromFills();
-        portfolios.buildLotsFromFills();                                        // a second start does nothing
-
-        assertThat(portfolios.lots(p.id())).isEqualTo(recorded);
-        assertThat(world.db().sql("SELECT COUNT(*) FROM sqlite_master WHERE name = 'holdings'")
-                .query(Integer.class).single()).isZero();
-    }
-
-    @Test
     void everyLineHasAShortPlainLanguageExplanation() {
         Portfolio p = portfolios.create("Explain", null, null, null);   // quant_llm
         portfolios.accept(p.id(), portfolios.propose(p.id()).id());
@@ -163,19 +141,6 @@ class LifecycleTest {
             assertThat(d.lines()).filteredOn(l -> l.symbol().equals(Engines.CASH))
                     .singleElement().extracting(Line::explanation).asString().startsWith("Cash is the money");
         }
-    }
-
-    @Test
-    void aDatabaseFromBeforeExplanationsWereStoredGetsThemWritten() {
-        Portfolio p = portfolios.create("Explain", null, null, null);
-        Decision before = portfolios.propose(p.id());
-
-        world.db().sql("ALTER TABLE decision_lines DROP COLUMN explanation").update();   // an older database
-        portfolios.migrate();
-        portfolios.migrate();                                                             // a second start does nothing
-
-        assertThat(portfolios.decision(before.id()).lines()).extracting(Line::explanation)
-                .isEqualTo(before.lines().stream().map(Line::explanation).toList());
     }
 
     @Test
