@@ -21,6 +21,11 @@
       <artifactId>sqlite-jdbc</artifactId>
     </dependency>
     <dependency>
+      <!-- JSON for Yahoo, EDGAR and the audit trail (version managed by Spring Boot). -->
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>

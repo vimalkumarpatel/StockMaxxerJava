@@ -27,11 +27,11 @@ public final class Engines {
     public static final List<EngineInfo> ALL = List.of(
             new EngineInfo(QUANT_LLM, "quant_only, then SIMULATED severity trims (a stand-in for the "
                     + "filing-diff LLM layer); trimmed weight goes to cash, capped at 15%"),
-            new EngineInfo(QUANT_ONLY, "Top 8 of 12 by 20-day return, weights proportional to "
+            new EngineInfo(QUANT_ONLY, "Top 8 of the benchmark's 12 largest holdings by 20-day return, weights proportional to "
                     + "1/volatility, 2% cash"));
 
-    // Simplification: 20-day windows and a top 8 (instead of 60/252 days and a top 15) so a month of
-    // history is enough. The sector cap is skipped (the synthetic universe has no sectors), and so is the
+    // Simplification: 20-day windows and a top 8 (instead of 60/252 days and a top 15), kept from the first
+    // slice. The sector cap is skipped (12 names per universe is too few for it), and so is the
     // no-trade band (an accepted recommendation simply rebalances to its target).
     static final int LOOKBACK = 20;
     static final int TOP_N = 8;
@@ -65,8 +65,9 @@ public final class Engines {
         return ALL.stream().anyMatch(e -> e.id().equals(engine));
     }
 
-    public static Target target(String engine, LocalDate asOf, Market market) {
-        Base base = quantOnly(asOf, market);
+    /** Target weights for one universe (the portfolio's benchmark picks it). */
+    public static Target target(String engine, LocalDate asOf, Market market, List<String> universe) {
+        Base base = quantOnly(asOf, market, universe);
         Weights w = switch (engine) {
             case QUANT_ONLY -> withCash(base.weights(), Map.of(), BigDecimal.ONE);
             case QUANT_LLM -> trimmed(base.weights(), asOf);
@@ -76,9 +77,9 @@ public final class Engines {
     }
 
     /** Rank by 20-day return, keep the top 8, weight each in proportion to 1/volatility, scaled to 0.98, capped at 15%. */
-    static Base quantOnly(LocalDate asOf, Market market) {
+    static Base quantOnly(LocalDate asOf, Market market, List<String> universe) {
         List<Stat> stats = new ArrayList<>();
-        for (String symbol : Market.UNIVERSE) {
+        for (String symbol : universe) {
             List<BigDecimal> closes = market.closes(symbol, asOf, LOOKBACK + 1);
             if (closes.size() < LOOKBACK + 1) {
                 continue;   // not enough history yet

@@ -8,6 +8,17 @@ CREATE TABLE IF NOT EXISTS sim_clock (
   today TEXT NOT NULL
 );
 
+-- Real daily bars as downloaded (Yahoo). Decisions never read this table: the prices job copies one day at a
+-- time into bars, so bars holds only the days up to the simulated day.
+CREATE TABLE IF NOT EXISTS history (
+  symbol     TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  open       TEXT NOT NULL,
+  close      TEXT NOT NULL,
+  PRIMARY KEY (symbol, trade_date)
+);
+
+-- The days revealed so far.
 CREATE TABLE IF NOT EXISTS bars (
   symbol     TEXT NOT NULL,
   trade_date TEXT NOT NULL,

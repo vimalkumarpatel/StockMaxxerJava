@@ -20,8 +20,8 @@ class EnginesTest {
         int daysWithTrims = 0;
         for (int day = 0; day < 15; day++) {
             LocalDate today = w.market().today();
-            Engines.Target only = Engines.target(Engines.QUANT_ONLY, today, w.market());
-            Engines.Target llm = Engines.target(Engines.QUANT_LLM, today, w.market());
+            Engines.Target only = Engines.target(Engines.QUANT_ONLY, today, w.market(), Market.UNIVERSES.get("SPY"));
+            Engines.Target llm = Engines.target(Engines.QUANT_LLM, today, w.market(), Market.UNIVERSES.get("SPY"));
 
             // compareTo, not equals: equals would call 1.000000 and 1 different.
             assertThat(Engines.sum(only.weights().values())).isEqualByComparingTo("1");

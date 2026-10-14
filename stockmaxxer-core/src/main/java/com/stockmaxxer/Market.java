@@ -1,54 +1,52 @@
 package com.stockmaxxer;
 
-import static java.time.DayOfWeek.SATURDAY;
-import static java.time.DayOfWeek.SUNDAY;
-
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
-import java.util.Random;
-import java.util.stream.Stream;
+import java.util.Map;
+import java.util.TreeSet;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Market data and the simulated clock: the trading calendar, synthetic prices, and the bars table. */
+/**
+ * Market data and the simulated clock. Real daily bars are downloaded into {@code history} once; the clock
+ * then replays them one trading day at a time, copying each day into {@code bars} ("revealed so far").
+ * Nothing reads {@code history} for decisions, so a bar after the simulated day can't be used by mistake.
+ */
 @Component
 public class Market {
 
-    /** Simplification: a fixed universe instead of the SIC/10-K/ADV screen, which needs filings and volume data. */
-    public static final List<String> UNIVERSE = List.of(
-            "SYN01", "SYN02", "SYN03", "SYN04", "SYN05", "SYN06",
-            "SYN07", "SYN08", "SYN09", "SYN10", "SYN11", "SYN12");
-
-    /** The curated benchmark list. These are synthetic series too, so every benchmark has data by construction. */
+    /** The benchmarks a portfolio can be compared against. Each one picks the portfolio's universe. */
     public static final List<String> BENCHMARKS = List.of("SPY", "QQQ", "IWM", "DIA");
 
-    static final LocalDate SEED_START = LocalDate.of(2026, 1, 5);   // a Monday
-    static final int SEED_DAYS = 30;                                 // enough history for the 20-day lookback
+    /**
+     * Each benchmark's universe: the ETF's 12 largest holdings on 2026-10-13, one share class per company.
+     * Simplification: a fixed list instead of a screen, so it has survivorship bias (today's winners).
+     * QQQ skips SPCX (listed in 2026, no history in the replay window); IWM skips its cash fund.
+     */
+    public static final Map<String, List<String>> UNIVERSES = Map.of(
+            "SPY", List.of("NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "AVGO", "META", "MU", "TSLA", "AMD", "BRK-B", "LLY"),
+            "QQQ", List.of("NVDA", "AAPL", "MSFT", "MU", "AMZN", "AMD", "META", "GOOGL", "TSLA", "AVGO", "WMT", "INTC"),
+            "IWM", List.of("FROG", "MOG-A", "BTSG", "TWST", "UMBF", "GKOS", "PCVX", "SM", "FCFS", "PTGX", "CTRE", "HUT"),
+            "DIA", List.of("GS", "CAT", "MSFT", "AMGN", "V", "UNH", "TRV", "GOOGL", "AAPL", "JPM", "SHW", "AXP"));
+
+    static final LocalDate HISTORY_START = LocalDate.of(2025, 1, 2);   // a year of lookback before the replay
+    static final LocalDate START = LocalDate.of(2026, 1, 2);           // the first simulated day
 
     public record Bar(BigDecimal open, BigDecimal close) {}
 
     private final JdbcClient db;
     private final TransactionTemplate tx;
+    private final Yahoo yahoo;
 
-    public Market(JdbcClient db, TransactionTemplate tx) {
+    public Market(JdbcClient db, TransactionTemplate tx, Yahoo yahoo) {
         this.db = db;
         this.tx = tx;
-    }
-
-    /** Simplification: every weekday is a trading day; a holiday calendar would change nothing in the lifecycle. */
-    public static LocalDate nextTradingDay(LocalDate day) {
-        LocalDate next = day.plusDays(1);
-        while (next.getDayOfWeek() == SATURDAY || next.getDayOfWeek() == SUNDAY) {
-            next = next.plusDays(1);
-        }
-        return next;
+        this.yahoo = yahoo;
     }
 
     /** The simulated trading day. */
@@ -58,45 +56,61 @@ public class Market {
                 .orElseThrow(() -> new IllegalStateException("no simulated day yet: run the seed job first"));
     }
 
-    /** The advance job: move the simulated clock to the next trading day. */
+    /** The advance job: move the clock to the next day that SPY traded, so real holidays are skipped. */
     public LocalDate advance() {
-        LocalDate next = nextTradingDay(today());
+        LocalDate next = db.sql("SELECT MIN(trade_date) FROM history WHERE symbol = 'SPY' AND trade_date > ?")
+                .param(today().toString()).query(String.class).optional().map(LocalDate::parse)
+                .orElseThrow(() -> new IllegalStateException("no newer day in history: run the fetch job"));
         db.sql("UPDATE sim_clock SET today = ? WHERE id = 1").param(next.toString()).update();
         return next;
     }
 
-    /** The seed job: a month of price history, with the clock set to its last day. Does nothing if already seeded. */
+    /** The seed job: download the history, then start the clock at START. Does nothing if already seeded. */
     public void seed() {
+        if (db.sql("SELECT COUNT(*) FROM sim_clock").query(Integer.class).single() > 0) {
+            return;
+        }
+        fetch();
+        startAt(START);
+    }
+
+    /** Reveal every day of history up to {@code start} and set the clock to the last trading day on or before it. */
+    public void startAt(LocalDate start) {
         tx.executeWithoutResult(status -> {
-            if (db.sql("SELECT COUNT(*) FROM sim_clock").query(Integer.class).single() > 0) {
-                return;
-            }
-            LocalDate day = SEED_START;
-            for (int i = 1; i <= SEED_DAYS; i++) {
-                writeBars(day);
-                if (i < SEED_DAYS) {
-                    day = nextTradingDay(day);
-                }
-            }
-            db.sql("INSERT INTO sim_clock (id, today) VALUES (1, ?)").param(day.toString()).update();
+            db.sql("INSERT OR IGNORE INTO bars SELECT symbol, trade_date, open, close FROM history WHERE trade_date <= ?")
+                    .param(start.toString()).update();
+            String first = db.sql("SELECT MAX(trade_date) FROM history WHERE symbol = 'SPY' AND trade_date <= ?")
+                    .param(start.toString()).query(String.class).single();
+            db.sql("INSERT INTO sim_clock (id, today) VALUES (1, ?)").param(first).update();
         });
     }
 
-    /** The prices job: write every symbol's bar for one day. INSERT OR IGNORE makes a re-run harmless. */
-    public void writeBars(LocalDate day) {
-        tx.executeWithoutResult(status -> {
-            for (String symbol : allSymbols()) {
-                BigDecimal prevClose = db.sql("""
-                                SELECT close FROM bars WHERE symbol = ? AND trade_date < ?
-                                ORDER BY trade_date DESC LIMIT 1""")
-                        .params(symbol, day.toString())
-                        .query(String.class).optional().map(BigDecimal::new).orElse(null);
-                Bar bar = synthetic(symbol, day, prevClose);
-                db.sql("INSERT OR IGNORE INTO bars (symbol, trade_date, open, close) VALUES (?, ?, ?, ?)")
-                        .params(symbol, day.toString(), bar.open().toPlainString(), bar.close().toPlainString())
+    /**
+     * The fetch job: download every symbol's bars after its last stored day, up to yesterday (New York time).
+     * Simplification: day D is fetched on D+1, so an unfinished session's close is never stored.
+     */
+    public int fetch() {
+        LocalDate today = LocalDate.now(Yahoo.NEW_YORK);
+        int written = 0;
+        for (String symbol : allSymbols()) {
+            LocalDate from = db.sql("SELECT MAX(trade_date) FROM history WHERE symbol = ?").param(symbol)
+                    .query(String.class).optional().map(d -> LocalDate.parse(d).plusDays(1)).orElse(HISTORY_START);
+            if (!from.isBefore(today)) {
+                continue;   // already up to date
+            }
+            for (Yahoo.DailyBar b : yahoo.daily(symbol, from, today)) {
+                written += db.sql("INSERT OR IGNORE INTO history (symbol, trade_date, open, close) VALUES (?, ?, ?, ?)")
+                        .params(symbol, b.date().toString(), b.open().toPlainString(), b.close().toPlainString())
                         .update();
             }
-        });
+        }
+        return written;
+    }
+
+    /** The prices job: reveal one day of history. INSERT OR IGNORE makes a re-run harmless. */
+    public int reveal(LocalDate day) {
+        return db.sql("INSERT OR IGNORE INTO bars SELECT symbol, trade_date, open, close FROM history WHERE trade_date = ?")
+                .param(day.toString()).update();
     }
 
     public Bar bar(String symbol, LocalDate day) {
@@ -108,11 +122,7 @@ public class Market {
                         "no bar for " + symbol + " on " + day + ": run the prices job first"));
     }
 
-    /**
-     * The last {@code count} closes up to and including {@code asOf}, oldest first. Simplification: no
-     * look-ahead guard, because the prices job never writes a bar past the simulated day, so future data
-     * doesn't exist.
-     */
+    /** The last {@code count} closes up to and including {@code asOf}, oldest first. */
     public List<BigDecimal> closes(String symbol, LocalDate asOf, int count) {
         List<BigDecimal> newestFirst = db.sql("""
                         SELECT close FROM bars WHERE symbol = ? AND trade_date <= ?
@@ -125,38 +135,10 @@ public class Market {
         return oldestFirst;
     }
 
-    static List<String> allSymbols() {
-        return Stream.concat(UNIVERSE.stream(), BENCHMARKS.stream()).toList();
-    }
-
-    /**
-     * Simplification: synthetic prices instead of Yahoo/EDGAR ingest. Each symbol is a random walk with
-     * its own drift and volatility, seeded by (symbol, date), so every run produces the same world.
-     * There are no splits or dividends, so close-to-close is the total return.
-     */
-    static Bar synthetic(String symbol, LocalDate day, BigDecimal prevClose) {
-        double[] p = params(symbol);   // start price, daily volatility, daily drift
-        double prev = prevClose == null ? p[0] : prevClose.doubleValue();
-        Random rng = new Random(Objects.hash(symbol, day.toEpochDay()));
-        double close = prev * (1 + p[2] + p[1] * rng.nextGaussian());
-        double open = prev * (1 + 0.3 * p[1] * rng.nextGaussian());
-        return new Bar(price(open), price(close));
-    }
-
-    private static BigDecimal price(double value) {
-        return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_EVEN);
-    }
-
-    private static double[] params(String symbol) {
-        return switch (symbol) {
-            case "SPY" -> new double[] {600, 0.009, 0.0004};
-            case "QQQ" -> new double[] {520, 0.012, 0.0006};
-            case "IWM" -> new double[] {220, 0.013, 0.0002};
-            case "DIA" -> new double[] {440, 0.008, 0.0003};
-            default -> {
-                int k = UNIVERSE.indexOf(symbol);   // 0..11 spreads start price, volatility and drift
-                yield new double[] {20 + 10 * k, 0.008 + 0.002 * k, 0.001 * (k % 5 - 2)};
-            }
-        };
+    /** Every stock in any universe, plus the benchmarks themselves, each once. */
+    public static List<String> allSymbols() {
+        TreeSet<String> all = new TreeSet<>(BENCHMARKS);
+        UNIVERSES.values().forEach(all::addAll);
+        return List.copyOf(all);
     }
 }

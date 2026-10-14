@@ -22,7 +22,7 @@ import com.stockmaxxer.Portfolios;
 @SpringBootApplication(scanBasePackages = "com.stockmaxxer")
 public class Jobs implements ApplicationRunner {
 
-    static final String JOBS = "seed|advance|prices|expire|settle|mark|propose";
+    static final String JOBS = "seed|fetch|advance|prices|expire|settle|mark|propose";
 
     private final Market market;
     private final Portfolios portfolios;
@@ -52,11 +52,9 @@ public class Jobs implements ApplicationRunner {
                 market.seed();
                 yield "seeded; the simulated day is " + market.today();
             }
+            case "fetch" -> "downloaded " + market.fetch() + " new bar(s)";
             case "advance" -> "the simulated day is now " + market.advance();
-            case "prices" -> {
-                market.writeBars(market.today());
-                yield "bars written for " + market.today();
-            }
+            case "prices" -> "revealed " + market.reveal(market.today()) + " bar(s) for " + market.today();
             case "expire" -> "expired " + portfolios.expireAll() + " unaccepted recommendation(s)";
             case "settle" -> "filled " + portfolios.settleAll() + " accepted recommendation(s) at the "
                     + market.today() + " open";

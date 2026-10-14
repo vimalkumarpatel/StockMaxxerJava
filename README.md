@@ -1,9 +1,9 @@
 # StockMaxxer (Java)
 
-A Java port of StockMaxxerPython (`../StockMaxxerPython`). This is currently its **minimum slice**:
-several simulated portfolios, each funded with a seed deposit, get a daily recommendation that you
-accept or ignore. An accepted recommendation fills at the next open. A nightly pipeline of
-independent jobs moves the simulated market forward one day at a time.
+A Java port of StockMaxxerPython (`../StockMaxxerPython`). Several simulated portfolios, each funded
+with a deposit, get a daily recommendation that you accept or ignore. An accepted recommendation fills
+at the next open. The prices are **real** (Yahoo daily bars), replayed one trading day at a time: a
+nightly pipeline of independent jobs moves the simulated day forward to the next real trading day.
 
 The slice deliberately prefers simplicity to realism. Every simplification is listed
 [below](#simplifications-and-why) with its reason, and marked `Simplification:` in the code.
@@ -15,11 +15,17 @@ commands from the repo root: the database is `data/stockmaxxer.sqlite`, relative
 directory (override it with `SM_DB_PATH`).
 
 ```bash
-mvn -q package                                                      # build and run the tests
-java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=seed   # a month of synthetic prices
+mvn -q package                                                      # build and run the tests (offline)
+java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=seed   # download real prices; the day is 2026-01-02
 java -jar stockmaxxer-app/target/stockmaxxer-app.jar                # API on http://localhost:8080/api/v1
 cd stockmaxxer-ui && npm install && npm run dev                     # UI on http://localhost:3000
 ```
+
+`seed` needs the network (about 10 seconds). After that, `scripts/nightly.sh` is offline: it replays the
+stored history. Run `scripts/fetch.sh` to download the days that are new since then. Catching up from
+2026-01-02 to today is about 200 nights; each night starts 6 JVMs, so it is slow but correct.
+
+After a change to `schema.sql`, delete `data/stockmaxxer.sqlite*` and seed again: there are no migrations.
 
 ## A simulated day
 
@@ -53,7 +59,7 @@ not a specialist. The UI shows it in the **Explanation** column. Each explanatio
    stocks, it's at the 15% limit, or a *simulated* risk check trimmed it.
 3. What the system does: buys, buys more, sells some, sells all, or holds.
 
-For example: *"SYN04 is number 5 of 12 stocks for price change in the last 20 trading days (+14.4%),
+For example: *"MU is number 5 of 12 stocks for price change in the last 20 trading days (+14.4%),
 so it is in the top 8. Its price moves less each day than most of the other top stocks, so it gets a
 larger part. The system buys more: its part changes from 13.72% to 13.75%."*
 
@@ -92,9 +98,10 @@ Each job runs on its own: `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.ja
 
 | Job | What it does |
 |---|---|
-| `seed` | One-off: 30 weekdays of synthetic prices from 2026-01-05; sets the simulated day |
-| `advance` | Moves the simulated day to the next weekday |
-| `prices` | Writes today's synthetic bars (open, close) for 12 stocks and 4 benchmarks |
+| `seed` | One-off: downloads daily bars from 2025-01-02 into `history`, reveals them up to 2026-01-02 and sets the simulated day there |
+| `fetch` | Downloads the bars that are new since the last fetch, up to yesterday (`scripts/fetch.sh`) |
+| `advance` | Moves the simulated day to the next day SPY traded (real holidays are skipped) |
+| `prices` | Reveals today: copies today's bars from `history` into `bars` |
 | `expire` | Earlier days' unaccepted recommendations → `EXPIRED` |
 | `settle` | Accepted recommendations → `FILLED` at today's open |
 | `mark` | Values every active portfolio at today's close (the equity curve) |
@@ -118,7 +125,7 @@ strings so they stay exact.
 | GET | `/portfolios/{id}/equity` | NAV per day next to the benchmark, rebased to the deposit |
 | GET | `/benchmarks` | The benchmarks a portfolio can be compared against, i.e. the allowed values for `benchmark` when creating one (the UI's Benchmark dropdown). Example: `["SPY","QQQ","IWM","DIA"]` |
 | GET | `/engines` | The recommendation engines you can choose, i.e. the allowed values for `engine`, each with a one-line description (the UI's Engine dropdown). Example: `[{"id":"quant_llm","description":"quant_only, then SIMULATED severity trims ..."},{"id":"quant_only","description":"Top 8 of 12 by 20-day return ..."}]` |
-| GET | `/clock` | The current simulated trading day. Recommendations are made for this day and can only be accepted while it lasts; the `advance` job (run by `scripts/nightly.sh`) moves it to the next weekday. Example: `{"today":"2026-02-18"}` |
+| GET | `/clock` | The current simulated trading day. Recommendations are made for this day and can only be accepted while it lasts; the `advance` job (run by `scripts/nightly.sh`) moves it to the next real trading day. Example: `{"today":"2026-02-18"}` |
 
 Errors return `{"error": "..."}`:
 - 400 for bad input
@@ -130,12 +137,13 @@ Errors return `{"error": "..."}`:
 
 | Real-world design | Here | Why |
 |---|---|---|
-| Wall clock, a 09:30 ET cutoff, market hours | A **simulated trading day** stored in the database; the nightly run advances it. A recommendation can be accepted only on its own day, and it fills at the next day's open | Same rule with no time zones. A demo day takes seconds, and tests need no fake clock |
-| Exchange holiday calendar | Weekdays are trading days | Holidays change nothing in the lifecycle |
-| Yahoo and EDGAR data | Deterministic **synthetic prices** for 12 stocks and 4 benchmarks, seeded per symbol and date | No network or API key. With no splits or dividends, close-to-close is the total return |
-| Universe screen (SIC codes, 10-K count, dollar volume) | A fixed list of 12 tickers | The screen needs filings and volume data |
+| Wall clock, a 09:30 ET cutoff, market hours | A **simulated trading day** stored in the database; the nightly run advances it through real history. A recommendation can be accepted only on its own day, and it fills at the next day's open | Same rule with no time zones. A demo day takes seconds, and tests need no fake clock |
+| Exchange holiday calendar | The days SPY traded are the trading days | The real calendar comes with the data |
+| Raw prices plus corporate actions, total returns | Yahoo's **split-adjusted** daily open and close, stored once and never overwritten; dividends ignored | Far less code. A split *after* the download would show as a price jump, and returns are price returns (for the benchmark too) |
+| Fetching day D on day D | Day D is fetched on D+1 | During market hours Yahoo returns the unfinished session; storing it would freeze a wrong close |
+| Universe screen (SIC codes, 10-K count, dollar volume) | Each benchmark's **12 largest holdings** (on 2026-10-13), one share class per company. A portfolio ranks its own benchmark's list | A rule, not a hand-picked list, with no screen to build. It has survivorship bias: these are today's largest names |
 | σ₆₀, 12-month momentum, top 15 | Top 8 by 20-day return, weights ∝ 1/σ₂₀ (15% name cap kept) | Same shape; a month of history is enough |
-| Sector cap, no-trade band | Not applied | The synthetic universe has no sectors, and every accepted recommendation simply rebalances to its target |
+| Sector cap, no-trade band | Not applied | 12 names per universe is too few for a sector cap, and every accepted recommendation simply rebalances to its target |
 | Filing diff + LLM + quote verification | `quant_llm` = `quant_only` plus a **simulated** severity 0–5 per symbol and day. Trim = weight × severity × 10%; trimmed weight goes to cash, capped at 15% by scaling every trim pro-rata | Keeps the engine choice meaningful and exercises the trim-only and cash-cap rules. The real signal plugs in behind the same engine switch |
 | Holdings snapshot per decision, audit records | Current holdings + cash; each decision keeps its prior and target weights | Enough to see what was proposed and what was applied |
 | Job watermark tables | Re-runnable SQL: `INSERT OR IGNORE`, status filters, one decision per portfolio per day | Safe re-runs without bookkeeping |
@@ -143,7 +151,7 @@ Errors return `{"error": "..."}`:
 | 11 Maven modules | 3: `core`, `app`, `jobs` | Still separates the web app from the jobs; more modules split out as subsystems arrive |
 | Next.js + TypeScript + charts | Next.js, one plain-JSX page, tables | Fewest files; `/api` is proxied, so no CORS setup |
 | Beta / alpha / IR against the benchmark | Equity table with the benchmark rebased to the deposit | Shows the chosen benchmark with no statistics code |
-| A look-ahead guard | Future bars don't exist until the `prices` job writes them | Point-in-time holds by construction |
+| A look-ahead guard | Decisions read only `bars`, which holds the days up to the simulated day; `history` is copied in one day at a time | Point-in-time holds by construction |
 | `archived_at` timestamp | An `archived` flag | Nothing reads the time |
 | LLM-written narratives (the original's one-sentence framing per position) | Fixed-template explanations (see [Explanations](#explanations)) | Every number comes from the decision itself, so an explanation can't disagree with the trade, and no API key is needed |
 | Choosing which lot to sell, tax rules (short vs long term, wash sales) | **FIFO lots**: every sale takes the oldest lot first (see [Holdings, lots and cash](#holdings-lots-and-cash)) | FIFO is the common default and the simplest order to apply; HIFO or LIFO would only change which lot is sold first |
@@ -161,7 +169,6 @@ Errors return `{"error": "..."}`:
 
 These are covered by the long-term plan:
 - the real signal: EDGAR filings, the Item 1A diff, the LLM with its replay cache, quote verification
-- real market data
 - the forecast range
 - backtests and evals
 - the audit trail
@@ -169,9 +176,10 @@ These are covered by the long-term plan:
 ## Layout
 
 ```
-stockmaxxer-core/    Market (simulated clock, synthetic prices), Engines, Portfolios (lifecycle), schema.sql
+stockmaxxer-core/    Market (simulated clock, history replay), Yahoo (prices), Engines, Portfolios (lifecycle), schema.sql
 stockmaxxer-app/     Spring Boot JSON API
 stockmaxxer-jobs/    the nightly jobs (no web server)
 stockmaxxer-ui/      the Next.js page
-scripts/nightly.sh   one simulated night
+scripts/nightly.sh   one simulated night (offline)
+scripts/fetch.sh     download what is new (network)
 ```

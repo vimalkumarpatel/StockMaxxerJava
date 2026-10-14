@@ -152,7 +152,7 @@ public class Portfolios {
             List<Holding> holdings = holdings(id);
             BigDecimal nav = nav(p.cash(), holdings, today, false);
             Map<String, BigDecimal> prior = currentWeights(p.cash(), holdings, nav, today);
-            Engines.Target target = Engines.target(p.engine(), today, market);
+            Engines.Target target = Engines.target(p.engine(), today, market, Market.UNIVERSES.get(p.benchmark()));
 
             db.sql("INSERT INTO decisions (portfolio_id, as_of, engine, status, nav) VALUES (?, ?, ?, ?, ?)")
                     .params(id, today.toString(), p.engine(), Status.PROPOSED.name(), nav.toPlainString())
