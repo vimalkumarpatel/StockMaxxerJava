@@ -195,6 +195,22 @@ class LifecycleTest {
     }
 
     @Test
+    void theDemoLoopFillsEachDaysRecommendationTheNextDay() {
+        Portfolio llm = portfolios.create("Demo LLM", null, "SPY", Engines.QUANT_LLM);
+        Portfolio only = portfolios.create("Demo quant", null, "SPY", Engines.QUANT_ONLY);
+        portfolios.proposeAll();
+        assertThat(portfolios.acceptAll()).isEqualTo(2);
+        for (int day = 0; day < 3; day++) {
+            TestDb.nightly(world);   // fills yesterday's accepted recommendation, proposes today's
+            assertThat(portfolios.acceptAll()).isEqualTo(2);
+        }
+        for (Portfolio p : List.of(llm, only)) {
+            assertThat(portfolios.decisions(p.id())).extracting(Decision::status)
+                    .containsExactly(Status.ACCEPTED, Status.FILLED, Status.FILLED, Status.FILLED);
+        }
+    }
+
+    @Test
     void theNightlyRunMarksAnEquityCurveAgainstTheChosenBenchmark() {
         Portfolio p = portfolios.create("Curve", null, "DIA", null);
         portfolios.accept(p.id(), portfolios.propose(p.id()).id());

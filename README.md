@@ -29,6 +29,74 @@ stored history. Run `scripts/fetch.sh` to download the days that are new since t
 
 After a change to `schema.sql`, delete `data/stockmaxxer.sqlite*` and seed again: there are no migrations.
 
+## Demo to a team
+
+The demo replays real trading days one at a time. The audience sees each day arrive, a recommendation made
+from that day's data, the trades filled at the next open, and the portfolios change. It runs **offline**:
+prices, filings and Claude's answers all come from what `scripts/fetch.sh` stored, and `SM_LLM_REPLAY=1` makes
+any missing answer an error instead of an API call. There are no keys or network calls in the meeting.
+
+**1. Prepare, once, before the meeting** (needs the network and both keys):
+
+```bash
+mvn -q package
+java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=seed   # real prices; the day is 2026-01-02
+scripts/fetch.sh                                                    # filings, then Claude (about 170 calls, all cached)
+java -jar stockmaxxer-app/target/stockmaxxer-app.jar                # in a second terminal
+cd stockmaxxer-ui && npm run dev                                    # in a third; open http://localhost:3000
+```
+
+In the UI, create the portfolios the story needs. Two on the **same benchmark** with different engines tell
+the A/B story; for example, "QQQ with Claude" (`quant_llm`) and "QQQ quant only" (`quant_only`). Add a third
+on another benchmark, such as DIA. Then stop the app and keep a copy of the database to reset to:
+`cp data/stockmaxxer.sqlite data/demo.sqlite`.
+
+**2. Run it:**
+
+```bash
+cp data/demo.sqlite data/stockmaxxer.sqlite      # back to the prepared start
+java -jar stockmaxxer-app/target/stockmaxxer-app.jar &
+scripts/demo.sh 10 5                             # 10 trading days, 5 seconds apart
+```
+
+Put the terminal and the browser side by side. The page reloads every 5 seconds. Each day, `demo.sh` runs the
+night's jobs:
+- `advance`, `prices`: the next real day
+- `expire`, `settle`, `mark`: yesterday's recommendations fill at today's open
+- `propose`: today's recommendations
+- `accept`: stands in for a person clicking *Accept*, with the same rules and audit rows
+- `report`: prints the day.
+
+```
+======== 2026-01-07 ========
+QQQ with Claude (quant_llm, QQQ)
+  filled at today's open: SELL 0.051523 AMD @ 212.1300; ... BUY 1.308971 WMT @ 114.1900;
+  NAV $998.12, cash 6.50% | QQQ from the same start: $1017.78
+  today's recommendation (ACCEPTED):
+    NVDA   BUY    6.77% ->   8.14%  severity 4: "On September 15, 2025, China's antitrust regulators ..."
+  past 63-day range at today's holdings: $934.10 to $1236.81 (median $1078.78), historical dispersion, not a prediction
+```
+
+**3. What to point at:**
+
+- **Point-in-time:** "Day D's prices are revealed only now; nothing from D+1 exists yet."
+- **The signal:** "NVDA's 10-Q adds a level-4 risk. Here is the exact sentence, checked word for word against the
+  stored filing." It shows under the line's explanation in the UI, and in the report.
+- **Trim-only:** "Claude can only make a part smaller. The trimmed part becomes cash, and cash stops at 15%."
+  Compare the cash of the two QQQ portfolios.
+- **The lifecycle:** "Accepted yesterday, filled at today's open." The holdings table shows the new lots and
+  their cost basis.
+- **A/B:** the two QQQ portfolios drift apart on the NAV chart, next to the benchmark.
+- **The forecast:** "This range is how the same holdings moved in the past. It is not a prediction."
+- **The audit trail:** finish with one recommendation's trail:
+  `curl localhost:8080/api/v1/portfolios/1/decisions/1/audit`.
+- **The whole window:**
+  - `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=backtest --benchmark=QQQ --from=2026-01-02`
+  - `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=evals`
+
+**4. Manual mode:** to show the human decision, don't run `demo.sh`. Click *Accept* or *Ignore* in the UI,
+then run `scripts/nightly.sh` once for each day.
+
 ## A simulated day
 
 1. **Create a portfolio:** a name, a deposit (default $1000), a benchmark (SPY by default, or QQQ,
@@ -202,6 +270,8 @@ Each job runs on its own: `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.ja
 | `settle` | Accepted recommendations → `FILLED` at today's open |
 | `mark` | Values every active portfolio at today's close (the equity curve) |
 | `propose` | Today's recommendation for every active portfolio that doesn't have one yet |
+| `accept` | Demo only: accepts today's recommendation of every active portfolio, as the UI's Accept button does |
+| `report` | Demo only: prints today's fills, NAV against the benchmark, recommendation with quotes, and forecast range |
 
 ## API
 
@@ -288,4 +358,5 @@ stockmaxxer-jobs/    the nightly jobs (no web server)
 stockmaxxer-ui/      the Next.js page
 scripts/nightly.sh   one simulated night (offline)
 scripts/fetch.sh     download what is new (network)
+scripts/demo.sh      a day-by-day team demo (offline)
 ```

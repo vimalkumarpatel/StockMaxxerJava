@@ -250,6 +250,23 @@ public class Portfolios {
 
     // --------------------------------------------------------------- nightly jobs
 
+    /**
+     * The accept job, for demos: accept today's recommendation of every active portfolio. It stands in for a
+     * person clicking Accept, through the same rules and the same audit rows as the UI button.
+     */
+    public int acceptAll() {
+        record Pending(long portfolioId, long decisionId) {}
+        List<Pending> pending = db.sql("""
+                        SELECT d.portfolio_id, d.id FROM decisions d JOIN portfolios p ON p.id = d.portfolio_id
+                        WHERE d.status = 'PROPOSED' AND d.as_of = ? AND p.archived = 0 ORDER BY d.id""")
+                .param(market.today().toString())
+                .query((rs, row) -> new Pending(rs.getLong(1), rs.getLong(2))).list();
+        for (Pending x : pending) {
+            accept(x.portfolioId(), x.decisionId());
+        }
+        return pending.size();
+    }
+
     /** The expire job: earlier days' proposals that nobody accepted. */
     public int expireAll() {
         String today = market.today().toString();

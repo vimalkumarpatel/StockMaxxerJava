@@ -27,7 +27,7 @@ import com.stockmaxxer.Signals;
 @SpringBootApplication(scanBasePackages = "com.stockmaxxer")
 public class Jobs implements ApplicationRunner {
 
-    static final String JOBS = "seed|fetch|filings|signals|advance|prices|expire|settle|mark|propose|backtest|evals";
+    static final String JOBS = "seed|fetch|filings|signals|advance|prices|expire|settle|mark|propose|accept|report|backtest|evals";
 
     private final Market market;
     private final Portfolios portfolios;
@@ -35,14 +35,17 @@ public class Jobs implements ApplicationRunner {
     private final Signals signals;
     private final Backtest backtest;
     private final Evals evals;
+    private final Report report;
 
-    public Jobs(Market market, Portfolios portfolios, Edgar edgar, Signals signals, Backtest backtest, Evals evals) {
+    public Jobs(Market market, Portfolios portfolios, Edgar edgar, Signals signals, Backtest backtest, Evals evals,
+                Report report) {
         this.market = market;
         this.portfolios = portfolios;
         this.edgar = edgar;
         this.signals = signals;
         this.backtest = backtest;
         this.evals = evals;
+        this.report = report;
     }
 
     public static void main(String[] args) {
@@ -75,6 +78,8 @@ public class Jobs implements ApplicationRunner {
                     + market.today() + " open";
             case "mark" -> "marked " + portfolios.markAll() + " portfolio(s) at the " + market.today() + " close";
             case "propose" -> "proposed " + portfolios.proposeAll() + " recommendation(s) for " + market.today();
+            case "accept" -> "accepted " + portfolios.acceptAll() + " recommendation(s) for " + market.today();
+            case "report" -> report.today();
             case "backtest" -> backtest(option(args, "benchmark", "SPY"), LocalDate.parse(option(args, "from", "2026-01-02")));
             case "evals" -> "\n" + String.join("\n", evals.report());
             default -> throw new IllegalArgumentException("unknown job '" + job.getFirst() + "'; expected " + JOBS);

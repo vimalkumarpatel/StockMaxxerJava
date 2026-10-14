@@ -97,6 +97,12 @@ export default function Home() {
     await loadPortfolio(selected);
   };
 
+  // Reload every 5 seconds, so the page follows scripts/demo.sh (or the nightly jobs) without a manual reload.
+  useEffect(() => {
+    const timer = setInterval(() => guarded(refresh)(), 5000);
+    return () => clearInterval(timer);
+  });
+
   const create = guarded(async (event) => {
     event.preventDefault();
     const p = await api('/portfolios', { method: 'POST', body: JSON.stringify(form) });
