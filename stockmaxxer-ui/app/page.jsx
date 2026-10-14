@@ -189,21 +189,149 @@ export default function Home() {
             : <p>None yet. <button onClick={generate}>Generate recommendation</button> or wait for the nightly run.</p>}
 
           {/* Native <details>: collapsed by default, toggles on click; the key collapses it again per portfolio. */}
-          <details key={selected}>
+          <details key={`history-${selected}`}>
             <summary>History ({decisions.filter((d) => d !== todays).length})</summary>
             {decisions.filter((d) => d !== todays).map((d) => <DecisionCard key={d.id} d={d} />)}
           </details>
 
           <h3>Equity vs {detail.portfolio.benchmark} (rebased to the deposit)</h3>
-          <table>
-            <thead><tr><th>Date</th><th>Portfolio</th><th>{detail.portfolio.benchmark}</th></tr></thead>
-            <tbody>
-              {equity.map((p) => <tr key={p.date}><td>{p.date}</td><td>{money(p.nav)}</td><td>{money(p.benchmark)}</td></tr>)}
-            </tbody>
-          </table>
+          <EquityChart key={`chart-${selected}`} points={equity} benchmark={detail.portfolio.benchmark} />
+          {/* The table view: every value in the chart, readable without hovering. */}
+          <details>
+            <summary className="small">Show as table</summary>
+            <table>
+              <thead><tr><th>Date</th><th>Portfolio</th><th>{detail.portfolio.benchmark}</th></tr></thead>
+              <tbody>
+                {equity.map((p) => <tr key={p.date}><td>{p.date}</td><td>{money(p.nav)}</td><td>{money(p.benchmark)}</td></tr>)}
+              </tbody>
+            </table>
+          </details>
         </>
       )}
     </main>
+  );
+}
+
+// Simplification: a hand-drawn SVG line chart instead of a charting library (no extra dependency).
+// One y-axis is honest here: both series are dollars from the same deposit, because the API rebases the
+// benchmark to it. Colours are the first two categorical slots: blue = portfolio, orange = benchmark.
+const PORTFOLIO_COLOR = '#2a78d6';
+const BENCHMARK_COLOR = '#eb6834';
+const SIZE = { w: 720, h: 260, left: 64, right: 84, top: 12, bottom: 34 };
+
+/** Round y-axis ticks (steps of 1, 2, 2.5 or 5 x 10^k) that cover min..max in about four steps. */
+function niceTicks(min, max) {
+  const raw = (max - min) / 4;
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * magnitude).find((s) => s >= raw);
+  const ticks = [];
+  for (let i = Math.floor(min / step); i <= Math.ceil(max / step); i++) ticks.push(i * step);
+  return { ticks, step };
+}
+
+function EquityChart({ points, benchmark }) {
+  const [hover, setHover] = useState(null);
+  const n = points.length;
+  if (n === 0) return null;
+
+  const { w, h, left, right, top, bottom } = SIZE;
+  const series = [
+    { key: 'benchmark', name: benchmark, color: BENCHMARK_COLOR },
+    { key: 'nav', name: 'Portfolio', color: PORTFOLIO_COLOR },   // drawn last, so it sits on top
+  ];
+  const values = points.flatMap((p) => [Number(p.nav), Number(p.benchmark)]);
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const pad = (hi - lo) * 0.05 || hi * 0.01 || 1;
+  const { ticks, step } = niceTicks(lo - pad, hi + pad);
+  const yMin = ticks[0];
+  const yMax = ticks[ticks.length - 1];
+  const plotW = w - left - right;
+  const x = (i) => (n === 1 ? left + plotW / 2 : left + (i * plotW) / (n - 1));
+  const y = (v) => top + ((yMax - Number(v)) * (h - top - bottom)) / (yMax - yMin);
+  const path = (key) => points.map((p, i) => `${i ? 'L' : 'M'}${x(i)},${y(p[key])}`).join(' ');
+  const tickLabel = (v) => v.toLocaleString('en-US', {
+    style: 'currency', currency: 'USD', maximumFractionDigits: Number.isInteger(step) ? 0 : 2,
+  });
+  const day = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const xTicks = [...new Set(n <= 6
+    ? points.map((_, i) => i)
+    : [0, 1, 2, 3, 4].map((k) => Math.round((k * (n - 1)) / 4)))];
+  const endY = series.map((s) => y(points[n - 1][s.key]));
+  const endLabels = Math.abs(endY[0] - endY[1]) >= 14;   // colliding end labels are dropped, not stacked
+  const at = hover == null ? null : Math.min(hover, n - 1);
+
+  // The crosshair snaps to the nearest day, so the pointer never has to land on a 2px line.
+  const onMove = (e) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - box.left) / box.width) * w;
+    setHover(n === 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round(((px - left) / plotW) * (n - 1)))));
+  };
+  const onKey = (e) => {
+    if (e.key === 'ArrowLeft') setHover((i) => Math.max(0, (i ?? n - 1) - 1));
+    if (e.key === 'ArrowRight') setHover((i) => Math.min(n - 1, (i ?? n - 1) + 1));
+  };
+
+  return (
+    <div className="chart">
+      <div className="legend">
+        {[...series].reverse().map((s) => (
+          <span key={s.key}><span className="key" style={{ background: s.color }} />{s.name}</span>
+        ))}
+      </div>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        role="img"
+        tabIndex={0}
+        aria-label={`Portfolio value versus ${benchmark}, ${day(points[0].date)} to ${day(points[n - 1].date)}. `
+          + 'Use the left and right arrow keys to read each day.'}
+        onPointerMove={onMove}
+        onPointerLeave={() => setHover(null)}
+        onFocus={() => setHover(n - 1)}
+        onBlur={() => setHover(null)}
+        onKeyDown={onKey}
+      >
+        {ticks.map((v, i) => (
+          <g key={v}>
+            <line x1={left} x2={w - right} y1={y(v)} y2={y(v)} stroke={i === 0 ? '#c3c2b7' : '#e1e0d9'} />
+            <text x={left - 8} y={y(v)} dy="0.32em" textAnchor="end" className="axis">{tickLabel(v)}</text>
+          </g>
+        ))}
+        {xTicks.map((i) => (
+          <text key={i} x={x(i)} y={h - bottom + 20} className="axis"
+            textAnchor={n > 1 && i === 0 ? 'start' : n > 1 && i === n - 1 ? 'end' : 'middle'}>{day(points[i].date)}</text>
+        ))}
+        {series.map((s) => (
+          <path key={s.key} d={path(s.key)} fill="none" stroke={s.color} strokeWidth="2"
+            strokeLinejoin="round" strokeLinecap="round" />
+        ))}
+        {at != null && <line x1={x(at)} x2={x(at)} y1={top} y2={h - bottom} stroke="#898781" />}
+        {series.map((s) => {
+          const i = at ?? n - 1;   // the end dots, or the hovered day's dots
+          return <circle key={s.key} cx={x(i)} cy={y(points[i][s.key])} r="4" fill={s.color} stroke="#fff" strokeWidth="2" />;
+        })}
+        {endLabels && at == null && series.map((s, k) => (
+          <text key={s.key} x={x(n - 1) + 10} y={endY[k]} dy="0.32em" className="end">{money(points[n - 1][s.key])}</text>
+        ))}
+      </svg>
+      {at != null && (
+        <div
+          className="tip"
+          style={{
+            left: `${(x(at) / w) * 100}%`,
+            transform: x(at) > w * 0.6 ? 'translateX(calc(-100% - 12px))' : 'translateX(12px)',
+          }}
+        >
+          <div className="muted">{day(points[at].date)}</div>
+          {[...series].reverse().map((s) => (
+            <div key={s.key}>
+              <span className="key" style={{ background: s.color }} /><b>{money(points[at][s.key])}</b>{' '}
+              <span className="muted">{s.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
