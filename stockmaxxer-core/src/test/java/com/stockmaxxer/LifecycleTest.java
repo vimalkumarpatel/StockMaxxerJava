@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
@@ -19,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import com.stockmaxxer.Model.Decision;
 import com.stockmaxxer.Model.EquityPoint;
 import com.stockmaxxer.Model.Line;
+import com.stockmaxxer.Model.Lot;
 import com.stockmaxxer.Model.Portfolio;
 import com.stockmaxxer.Model.PortfolioDetail;
 import com.stockmaxxer.Model.Position;
@@ -106,7 +106,7 @@ class LifecycleTest {
         assertThat(totalCost.add(afterFirst.portfolio().cash())).isEqualByComparingTo("1000.00");
         assertThat(totalWeight).isCloseTo(BigDecimal.ONE, org.assertj.core.api.Assertions.within(new BigDecimal("0.00001")));
 
-        // A second accepted recommendation rebalances: average cost on every name.
+        // A second accepted recommendation rebalances. Every name held one lot from the first fill.
         portfolios.accept(p.id(), portfolios.propose(p.id()).id());
         TestDb.nextDay(world);
         portfolios.settleAll();
@@ -115,35 +115,33 @@ class LifecycleTest {
             Position before = first.get(h.symbol());
             BigDecimal open = market.bar(h.symbol(), secondFill).open();
             BigDecimal expected = before == null
-                    ? h.shares().multiply(open)                                                   // a new name
+                    ? h.shares().multiply(open)                                                   // a new name: one new lot
                     : h.shares().compareTo(before.shares()) >= 0
-                            ? before.costBasis().add(h.shares().subtract(before.shares()).multiply(open))   // bought more
-                            : before.costBasis().multiply(h.shares()).divide(before.shares(), 10, RoundingMode.HALF_EVEN);  // sold some
-            assertThat(h.costBasis()).as("average cost basis of %s", h.symbol()).isEqualByComparingTo(expected);
+                            ? before.costBasis().add(h.shares().subtract(before.shares()).multiply(open))   // bought more: a second lot
+                            : h.shares().multiply(market.bar(h.symbol(), firstFill).open());          // trimmed: what's left of the first lot
+            assertThat(h.costBasis()).as("cost basis of %s", h.symbol()).isEqualByComparingTo(expected);
         }
     }
 
     @Test
-    void aDatabaseFromBeforeCostBasisWasRecordedIsMigratedToTheSameValues() {
+    void aDatabaseFromBeforeLotsWereRecordedIsRebuiltFromItsFills() {
         Portfolio p = portfolios.create("Old", null, null, Engines.QUANT_ONLY);
         portfolios.accept(p.id(), portfolios.propose(p.id()).id());
         TestDb.nightly(world);                                                  // first fill
         portfolios.accept(p.id(), portfolios.decisions(p.id()).getFirst().id());
         TestDb.nightly(world);                                                  // second fill rebalances
-        Map<String, BigDecimal> recorded = costBasis(p);
+        List<Lot> recorded = portfolios.lots(p.id());
+        assertThat(recorded).isNotEmpty();
 
-        world.db().sql("ALTER TABLE holdings DROP COLUMN cost_basis").update();  // what an older database looks like
-        portfolios.addCostBasisColumn();
-        portfolios.addCostBasisColumn();                                        // a second start does nothing
+        // What an older database looks like: no lots, and a holdings table instead.
+        world.db().sql("DELETE FROM lots").update();
+        world.db().sql("CREATE TABLE holdings (portfolio_id INTEGER, symbol TEXT, shares TEXT)").update();
+        portfolios.buildLotsFromFills();
+        portfolios.buildLotsFromFills();                                        // a second start does nothing
 
-        Map<String, BigDecimal> migrated = costBasis(p);
-        assertThat(migrated.keySet()).isEqualTo(recorded.keySet());
-        recorded.forEach((symbol, cost) -> assertThat(migrated.get(symbol)).as(symbol).isEqualByComparingTo(cost));
-    }
-
-    private Map<String, BigDecimal> costBasis(Portfolio p) {
-        return portfolios.detail(p.id()).holdings().stream()
-                .collect(Collectors.toMap(Position::symbol, Position::costBasis));
+        assertThat(portfolios.lots(p.id())).isEqualTo(recorded);
+        assertThat(world.db().sql("SELECT COUNT(*) FROM sqlite_master WHERE name = 'holdings'")
+                .query(Integer.class).single()).isZero();
     }
 
     @Test

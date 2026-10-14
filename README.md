@@ -42,6 +42,25 @@ PROPOSED ──accept──► ACCEPTED ──next open (settle job)──► FI
    └──the day ends────► EXPIRED
 ```
 
+## Holdings, lots and cash
+
+- **Every buy is a lot:** the day, the number of shares, and the price paid per share (that day's open).
+  A holding is the sum of its lots, and its **cost basis** is what was paid for the shares still held.
+- **Buying more at a different price** adds a new lot. Older lots stay as they were.
+- **Trimming**, whether at a profit or a loss, sells at the next open and takes shares from the
+  **oldest lot first (FIFO)**. A lot is used up whole or reduced; the price of what remains never
+  changes. The proceeds go to cash.
+- **Selling out:** when a name drops out of the recommendation, all its lots are sold at the next open
+  and the proceeds go to cash.
+- **Selling the whole portfolio** isn't possible yet. Both engines always stay mostly invested (cash is
+  2% to 15%), and archiving a portfolio freezes it without selling anything.
+- **Cash** is one number per portfolio, not a lot:
+  - It starts as the deposit and changes only at fills, where it becomes whatever isn't invested at the
+    open, including sale proceeds.
+  - It's never negative, because shares round down.
+  - It earns no interest.
+- **Not recorded yet:** realised gains and losses. For now they show only as the change in cash.
+
 ## The nightly jobs
 
 Each job runs on its own: `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=<name>`.
@@ -68,7 +87,7 @@ strings so they stay exact.
 |---|---|---|
 | POST | `/portfolios` | `{"name", "initialDeposit"?, "benchmark"?, "engine"?}` |
 | GET | `/portfolios[?includeArchived=true]` | list |
-| GET | `/portfolios/{id}` | With cash, NAV and holdings. Each holding has shares, market value (at the simulated day's close), average cost basis and % of NAV |
+| GET | `/portfolios/{id}` | With cash, NAV and holdings. Each holding has shares, market value (at the simulated day's close), cost basis (what was paid for the shares still held) and % of NAV |
 | DELETE | `/portfolios/{id}` | archive (soft delete) |
 | POST | `/portfolios/{id}/restore` | un-archive |
 | POST | `/portfolios/{id}/recommendations` | generate today's recommendation now |
@@ -104,7 +123,7 @@ Errors return `{"error": "..."}`:
 | Beta / alpha / IR against the benchmark | Equity table with the benchmark rebased to the deposit | Shows the chosen benchmark with no statistics code |
 | A look-ahead guard | Future bars don't exist until the `prices` job writes them | Point-in-time holds by construction |
 | `archived_at` timestamp | An `archived` flag | Nothing reads the time |
-| Tax lots (FIFO or specific-lot) | One **average-cost** basis per holding, recorded in `holdings.cost_basis` at every fill: a buy adds what it paid, a sale removes the sold fraction | One number per holding and no lot table; average cost is the standard method for funds and enough to compare value with what was paid |
+| Choosing which lot to sell, tax rules (short vs long term, wash sales) | **FIFO lots**: every sale takes the oldest lot first (see [Holdings, lots and cash](#holdings-lots-and-cash)) | FIFO is the common default and the simplest order to apply; HIFO or LIFO would only change which lot is sold first |
 
 **Kept from the original design:**
 - `BigDecimal` everywhere, stored as TEXT because SQLite has no exact decimal type.

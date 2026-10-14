@@ -27,14 +27,16 @@ CREATE TABLE IF NOT EXISTS portfolios (
   archived        INTEGER NOT NULL DEFAULT 0
 );
 
--- Simplification: the current holdings only, not a snapshot per decision.
--- cost_basis is what was paid for the shares (average cost), recorded at every fill.
-CREATE TABLE IF NOT EXISTS holdings (
+-- One row per purchase (a lot): the day it was bought, the price paid per share, and how many of those
+-- shares are still held. A holding is the sum of its lots. Sales take shares from the oldest lots first
+-- (FIFO), so a lot's price never changes. Simplification: the current lots only, not a snapshot per decision.
+CREATE TABLE IF NOT EXISTS lots (
   portfolio_id INTEGER NOT NULL REFERENCES portfolios (id),
   symbol       TEXT NOT NULL,
+  acquired_on  TEXT NOT NULL,
   shares       TEXT NOT NULL,
-  cost_basis   TEXT NOT NULL,
-  PRIMARY KEY (portfolio_id, symbol)
+  price        TEXT NOT NULL,
+  PRIMARY KEY (portfolio_id, symbol, acquired_on)
 );
 
 -- One recommendation per portfolio per day. status: PROPOSED, ACCEPTED, FILLED, IGNORED, EXPIRED.

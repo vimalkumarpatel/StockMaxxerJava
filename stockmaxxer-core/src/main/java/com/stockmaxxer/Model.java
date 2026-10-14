@@ -15,7 +15,14 @@ public final class Model {
     public record Portfolio(long id, String name, BigDecimal initialDeposit, BigDecimal cash,
                             String benchmark, String engine, LocalDate createdOn, boolean archived) {}
 
-    /** Shares held, and what was paid for them (average cost), recorded at every fill. */
+    /** One purchase: shares still held from it, and the price paid per share (it never changes). */
+    public record Lot(String symbol, LocalDate acquiredOn, BigDecimal shares, BigDecimal price) {
+        public BigDecimal cost() {
+            return shares.multiply(price);
+        }
+    }
+
+    /** A holding: the sum of its lots. costBasis is what was paid for the shares still held. */
     public record Holding(String symbol, BigDecimal shares, BigDecimal costBasis) {}
 
     /** A holding valued at the simulated day's close: market value, average cost basis, and its share of NAV. */

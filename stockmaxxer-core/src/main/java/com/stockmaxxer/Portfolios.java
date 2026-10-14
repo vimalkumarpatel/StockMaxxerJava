@@ -23,6 +23,7 @@ import com.stockmaxxer.Model.Decision;
 import com.stockmaxxer.Model.EquityPoint;
 import com.stockmaxxer.Model.Holding;
 import com.stockmaxxer.Model.Line;
+import com.stockmaxxer.Model.Lot;
 import com.stockmaxxer.Model.Portfolio;
 import com.stockmaxxer.Model.PortfolioDetail;
 import com.stockmaxxer.Model.Position;
@@ -255,35 +256,30 @@ public class Portfolios {
 
     private void settle(Decision d, LocalDate day) {
         Portfolio p = get(d.portfolioId());
-        Fill fill = rebalance(p.cash(), holdings(p.id()), d, day);
-        db.sql("DELETE FROM holdings WHERE portfolio_id = ?").param(p.id()).update();
-        for (Holding h : fill.holdings()) {
-            db.sql("INSERT INTO holdings (portfolio_id, symbol, shares, cost_basis) VALUES (?, ?, ?, ?)")
-                    .params(p.id(), h.symbol(), h.shares().toPlainString(), h.costBasis().toPlainString())
-                    .update();
-        }
+        Fill fill = rebalance(p.cash(), lots(p.id()), d, day);
+        writeLots(p.id(), fill.lots());
         db.sql("UPDATE portfolios SET cash = ? WHERE id = ?").params(fill.cash().toPlainString(), p.id()).update();
         db.sql("UPDATE decisions SET status = 'FILLED', fill_date = ? WHERE id = ?")
                 .params(day.toString(), d.id())
                 .update();
     }
 
-    /** A portfolio after a fill: its cash and its holdings. */
-    private record Fill(BigDecimal cash, List<Holding> holdings) {}
+    /** A portfolio after a fill: its cash and its lots. */
+    private record Fill(BigDecimal cash, List<Lot> lots) {}
 
     /**
      * One fill: rebalance to the decision's target weights at {@code day}'s open. No transaction costs
-     * (removed system-wide). Shares round down, so cash never goes negative. What was paid is recorded per
-     * holding with the average-cost method: buying adds what was paid at this open, selling removes the
-     * sold fraction of the basis.
+     * (removed system-wide). Shares round down, so cash never goes negative. Sale proceeds and anything
+     * not invested stay in cash. A held name with no target weight is sold in full: none of its lots carry over.
      */
-    private Fill rebalance(BigDecimal cash, List<Holding> holdings, Decision d, LocalDate day) {
-        BigDecimal navAtOpen = nav(cash, holdings, day, true);
-        Map<String, Holding> before = new TreeMap<>();
-        for (Holding h : holdings) {
-            before.put(h.symbol(), h);
+    private Fill rebalance(BigDecimal cash, List<Lot> lots, Decision d, LocalDate day) {
+        BigDecimal navAtOpen = cash;
+        Map<String, List<Lot>> bySymbol = new TreeMap<>();
+        for (Lot lot : lots) {
+            navAtOpen = navAtOpen.add(lot.shares().multiply(market.bar(lot.symbol(), day).open()));
+            bySymbol.computeIfAbsent(lot.symbol(), s -> new ArrayList<>()).add(lot);   // stays oldest first
         }
-        List<Holding> after = new ArrayList<>();
+        List<Lot> after = new ArrayList<>();
         BigDecimal invested = BigDecimal.ZERO;
         for (Line line : d.lines()) {
             if (line.symbol().equals(Engines.CASH) || line.targetWeight().signum() == 0) {
@@ -292,32 +288,74 @@ public class Portfolios {
             BigDecimal open = market.bar(line.symbol(), day).open();
             // Fractional shares, as in the original: $1,000 can't buy whole shares of every name.
             BigDecimal shares = line.targetWeight().multiply(navAtOpen).divide(open, 6, RoundingMode.DOWN);
-            Holding old = before.get(line.symbol());
-            BigDecimal cost = old == null
-                    ? shares.multiply(open)                                                        // a new name
-                    : shares.compareTo(old.shares()) >= 0
-                            ? old.costBasis().add(shares.subtract(old.shares()).multiply(open))    // bought more
-                            : old.costBasis().multiply(shares).divide(old.shares(), 10, RoundingMode.HALF_EVEN);  // sold some
-            after.add(new Holding(line.symbol(), shares, cost));
+            after.addAll(resize(line.symbol(), bySymbol.getOrDefault(line.symbol(), List.of()), shares, day, open));
             invested = invested.add(shares.multiply(open));
         }
         return new Fill(navAtOpen.subtract(invested), after);
     }
 
     /**
-     * One-time migration for a database created before what was paid was recorded: adds the cost_basis
-     * column and fills it by replaying each portfolio's fills through {@link #rebalance}. It does nothing
-     * once the column exists, and can be deleted when no such database is left.
+     * One symbol's lots (oldest first) after resizing the holding to {@code target} shares at {@code price}.
+     * Buying adds a lot at today's price and leaves older lots as they were. Selling takes shares from the
+     * oldest lots first (FIFO): a lot is used up whole or reduced, and the price of what remains never
+     * changes. Simplification: FIFO is the common default and the simplest order to apply; HIFO or LIFO
+     * would only change which lot is sold first.
+     */
+    static List<Lot> resize(String symbol, List<Lot> oldestFirst, BigDecimal target, LocalDate day, BigDecimal price) {
+        BigDecimal held = oldestFirst.stream().map(Lot::shares).reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<Lot> result = new ArrayList<>();
+        if (target.compareTo(held) >= 0) {
+            result.addAll(oldestFirst);
+            BigDecimal more = target.subtract(held);
+            if (more.signum() > 0) {
+                Lot last = result.isEmpty() ? null : result.getLast();
+                if (last != null && last.acquiredOn().equals(day)) {
+                    // A second fill on one day (catching up on skipped nights) pays the same open price.
+                    result.set(result.size() - 1, new Lot(symbol, day, last.shares().add(more), price));
+                } else {
+                    result.add(new Lot(symbol, day, more, price));
+                }
+            }
+            return result;
+        }
+        BigDecimal toSell = held.subtract(target);
+        for (Lot lot : oldestFirst) {
+            if (toSell.signum() == 0) {
+                result.add(lot);
+            } else if (lot.shares().compareTo(toSell) <= 0) {
+                toSell = toSell.subtract(lot.shares());   // the whole lot is sold
+            } else {
+                result.add(new Lot(symbol, lot.acquiredOn(), lot.shares().subtract(toSell), lot.price()));
+                toSell = BigDecimal.ZERO;
+            }
+        }
+        return result;
+    }
+
+    private void writeLots(long portfolioId, List<Lot> lots) {
+        db.sql("DELETE FROM lots WHERE portfolio_id = ?").param(portfolioId).update();
+        for (Lot lot : lots) {
+            db.sql("INSERT INTO lots (portfolio_id, symbol, acquired_on, shares, price) VALUES (?, ?, ?, ?, ?)")
+                    .params(portfolioId, lot.symbol(), lot.acquiredOn().toString(),
+                            lot.shares().toPlainString(), lot.price().toPlainString())
+                    .update();
+        }
+    }
+
+    /**
+     * One-time migration for a database from before lots were recorded (one holdings row per symbol):
+     * rebuilds every portfolio's lots by replaying its fills through {@link #rebalance}, then drops the
+     * superseded holdings table. It does nothing once lots exist, and can be deleted when no such
+     * database is left.
      */
     @PostConstruct
-    void addCostBasisColumn() {
-        int present = db.sql("SELECT COUNT(*) FROM pragma_table_info('holdings') WHERE name = 'cost_basis'")
-                .query(Integer.class).single();
-        if (present > 0) {
+    void buildLotsFromFills() {
+        boolean noLots = db.sql("SELECT COUNT(*) FROM lots").query(Integer.class).single() == 0;
+        boolean anyFills = db.sql("SELECT COUNT(*) FROM decisions WHERE status = 'FILLED'").query(Integer.class).single() > 0;
+        if (!noLots || !anyFills) {
             return;
         }
         tx.executeWithoutResult(status -> {
-            db.sql("ALTER TABLE holdings ADD COLUMN cost_basis TEXT NOT NULL DEFAULT '0'").update();
             for (Portfolio p : list(true)) {
                 Fill fill = new Fill(p.initialDeposit(), List.of());
                 List<Long> filled = db.sql("""
@@ -326,14 +364,11 @@ public class Portfolios {
                         .param(p.id()).query(Long.class).list();
                 for (long id : filled) {
                     Decision d = decision(id);
-                    fill = rebalance(fill.cash(), fill.holdings(), d, d.fillDate());
+                    fill = rebalance(fill.cash(), fill.lots(), d, d.fillDate());
                 }
-                for (Holding h : fill.holdings()) {
-                    db.sql("UPDATE holdings SET cost_basis = ? WHERE portfolio_id = ? AND symbol = ?")
-                            .params(h.costBasis().toPlainString(), p.id(), h.symbol())
-                            .update();
-                }
+                writeLots(p.id(), fill.lots());
             }
+            db.sql("DROP TABLE IF EXISTS holdings").update();
         });
     }
 
@@ -395,10 +430,22 @@ public class Portfolios {
 
     // -------------------------------------------------------------------- helpers
 
+    /** Each holding is the sum of its lots: total shares, and what was paid for them. */
     private List<Holding> holdings(long portfolioId) {
-        return db.sql("SELECT symbol, shares, cost_basis FROM holdings WHERE portfolio_id = ? ORDER BY symbol")
+        Map<String, Holding> bySymbol = new TreeMap<>();
+        for (Lot lot : lots(portfolioId)) {
+            bySymbol.merge(lot.symbol(), new Holding(lot.symbol(), lot.shares(), lot.cost()),
+                    (a, b) -> new Holding(a.symbol(), a.shares().add(b.shares()), a.costBasis().add(b.costBasis())));
+        }
+        return List.copyOf(bySymbol.values());
+    }
+
+    /** A portfolio's lots, oldest first within each symbol. */
+    List<Lot> lots(long portfolioId) {
+        return db.sql("SELECT symbol, acquired_on, shares, price FROM lots WHERE portfolio_id = ? ORDER BY symbol, acquired_on")
                 .param(portfolioId)
-                .query((rs, row) -> new Holding(rs.getString("symbol"), dec(rs, "shares"), dec(rs, "cost_basis")))
+                .query((rs, row) -> new Lot(rs.getString("symbol"), LocalDate.parse(rs.getString("acquired_on")),
+                        dec(rs, "shares"), dec(rs, "price")))
                 .list();
     }
 
