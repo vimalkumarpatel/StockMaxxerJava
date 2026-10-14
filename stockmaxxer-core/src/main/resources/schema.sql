@@ -28,10 +28,12 @@ CREATE TABLE IF NOT EXISTS portfolios (
 );
 
 -- Simplification: the current holdings only, not a snapshot per decision.
+-- cost_basis is what was paid for the shares (average cost), recorded at every fill.
 CREATE TABLE IF NOT EXISTS holdings (
   portfolio_id INTEGER NOT NULL REFERENCES portfolios (id),
   symbol       TEXT NOT NULL,
   shares       TEXT NOT NULL,
+  cost_basis   TEXT NOT NULL,
   PRIMARY KEY (portfolio_id, symbol)
 );
 

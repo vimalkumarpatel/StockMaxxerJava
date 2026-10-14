@@ -104,7 +104,7 @@ Errors return `{"error": "..."}`:
 | Beta / alpha / IR against the benchmark | Equity table with the benchmark rebased to the deposit | Shows the chosen benchmark with no statistics code |
 | A look-ahead guard | Future bars don't exist until the `prices` job writes them | Point-in-time holds by construction |
 | `archived_at` timestamp | An `archived` flag | Nothing reads the time |
-| Tax lots and stored cost basis | **Average-cost** basis, derived on each request by replaying the portfolio's fills through the same rebalance code the settle job uses | No schema change or migration, and existing portfolios get a basis straight away; at this scale the replay is instant |
+| Tax lots (FIFO or specific-lot) | One **average-cost** basis per holding, recorded in `holdings.cost_basis` at every fill: a buy adds what it paid, a sale removes the sold fraction | One number per holding and no lot table; average cost is the standard method for funds and enough to compare value with what was paid |
 
 **Kept from the original design:**
 - `BigDecimal` everywhere, stored as TEXT because SQLite has no exact decimal type.

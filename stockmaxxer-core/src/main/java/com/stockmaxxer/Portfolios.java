@@ -13,6 +13,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import jakarta.annotation.PostConstruct;
+
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -106,11 +108,9 @@ public class Portfolios {
         LocalDate today = market.today();
         List<Holding> holdings = holdings(id);
         BigDecimal nav = nav(p.cash(), holdings, today, false);
-        Map<String, Lot> lots = replayFills(p);
         List<Position> positions = holdings.stream().map(h -> {
             BigDecimal value = h.shares().multiply(market.bar(h.symbol(), today).close());
-            Lot lot = lots.get(h.symbol());
-            return new Position(h.symbol(), h.shares(), value, lot == null ? null : lot.cost(),
+            return new Position(h.symbol(), h.shares(), value, h.costBasis(),
                     value.divide(nav, Engines.WEIGHT_SCALE, RoundingMode.HALF_EVEN));
         }).toList();
         return new PortfolioDetail(p, positions, nav,
@@ -255,38 +255,35 @@ public class Portfolios {
 
     private void settle(Decision d, LocalDate day) {
         Portfolio p = get(d.portfolioId());
-        Map<String, Lot> lots = new TreeMap<>();
-        for (Holding h : holdings(p.id())) {
-            lots.put(h.symbol(), new Lot(h.shares(), BigDecimal.ZERO));   // cost isn't stored; settle only needs shares
-        }
-        BigDecimal cash = rebalance(p.cash(), lots, d, day);
+        Fill fill = rebalance(p.cash(), holdings(p.id()), d, day);
         db.sql("DELETE FROM holdings WHERE portfolio_id = ?").param(p.id()).update();
-        for (var e : lots.entrySet()) {
-            db.sql("INSERT INTO holdings (portfolio_id, symbol, shares) VALUES (?, ?, ?)")
-                    .params(p.id(), e.getKey(), e.getValue().shares().toPlainString())
+        for (Holding h : fill.holdings()) {
+            db.sql("INSERT INTO holdings (portfolio_id, symbol, shares, cost_basis) VALUES (?, ?, ?, ?)")
+                    .params(p.id(), h.symbol(), h.shares().toPlainString(), h.costBasis().toPlainString())
                     .update();
         }
-        db.sql("UPDATE portfolios SET cash = ? WHERE id = ?").params(cash.toPlainString(), p.id()).update();
+        db.sql("UPDATE portfolios SET cash = ? WHERE id = ?").params(fill.cash().toPlainString(), p.id()).update();
         db.sql("UPDATE decisions SET status = 'FILLED', fill_date = ? WHERE id = ?")
                 .params(day.toString(), d.id())
                 .update();
     }
 
-    /** A position's shares and what was paid for them. */
-    private record Lot(BigDecimal shares, BigDecimal cost) {}
+    /** A portfolio after a fill: its cash and its holdings. */
+    private record Fill(BigDecimal cash, List<Holding> holdings) {}
 
     /**
-     * One fill: rebalance {@code lots} to the decision's target weights at {@code day}'s open and return the
-     * new cash. No transaction costs (removed system-wide). Shares round down, so cash never goes negative.
-     * Cost basis uses the average-cost method: buying adds what was paid, selling removes the sold
-     * fraction of the basis. Shared by the settle job and by {@link #replayFills}, so the two can't drift apart.
+     * One fill: rebalance to the decision's target weights at {@code day}'s open. No transaction costs
+     * (removed system-wide). Shares round down, so cash never goes negative. What was paid is recorded per
+     * holding with the average-cost method: buying adds what was paid at this open, selling removes the
+     * sold fraction of the basis.
      */
-    private BigDecimal rebalance(BigDecimal cash, Map<String, Lot> lots, Decision d, LocalDate day) {
-        BigDecimal navAtOpen = cash;
-        for (var e : lots.entrySet()) {
-            navAtOpen = navAtOpen.add(e.getValue().shares().multiply(market.bar(e.getKey(), day).open()));
+    private Fill rebalance(BigDecimal cash, List<Holding> holdings, Decision d, LocalDate day) {
+        BigDecimal navAtOpen = nav(cash, holdings, day, true);
+        Map<String, Holding> before = new TreeMap<>();
+        for (Holding h : holdings) {
+            before.put(h.symbol(), h);
         }
-        Map<String, Lot> next = new TreeMap<>();
+        List<Holding> after = new ArrayList<>();
         BigDecimal invested = BigDecimal.ZERO;
         for (Line line : d.lines()) {
             if (line.symbol().equals(Engines.CASH) || line.targetWeight().signum() == 0) {
@@ -295,35 +292,49 @@ public class Portfolios {
             BigDecimal open = market.bar(line.symbol(), day).open();
             // Fractional shares, as in the original: $1,000 can't buy whole shares of every name.
             BigDecimal shares = line.targetWeight().multiply(navAtOpen).divide(open, 6, RoundingMode.DOWN);
-            Lot old = lots.getOrDefault(line.symbol(), new Lot(BigDecimal.ZERO, BigDecimal.ZERO));
-            BigDecimal cost = shares.compareTo(old.shares()) >= 0
-                    ? old.cost().add(shares.subtract(old.shares()).multiply(open))           // bought more at this open
-                    : old.cost().multiply(shares).divide(old.shares(), 10, RoundingMode.HALF_EVEN);   // sold some
-            next.put(line.symbol(), new Lot(shares, cost));
+            Holding old = before.get(line.symbol());
+            BigDecimal cost = old == null
+                    ? shares.multiply(open)                                                        // a new name
+                    : shares.compareTo(old.shares()) >= 0
+                            ? old.costBasis().add(shares.subtract(old.shares()).multiply(open))    // bought more
+                            : old.costBasis().multiply(shares).divide(old.shares(), 10, RoundingMode.HALF_EVEN);  // sold some
+            after.add(new Holding(line.symbol(), shares, cost));
             invested = invested.add(shares.multiply(open));
         }
-        lots.clear();
-        lots.putAll(next);
-        return navAtOpen.subtract(invested);
+        return new Fill(navAtOpen.subtract(invested), after);
     }
 
     /**
-     * Simplification: cost basis is derived by replaying the portfolio's fills, oldest first, through the
-     * same {@link #rebalance} the settle job uses, instead of being stored. It needs no schema change or
-     * migration, and at this scale the replay is instant.
+     * One-time migration for a database created before what was paid was recorded: adds the cost_basis
+     * column and fills it by replaying each portfolio's fills through {@link #rebalance}. It does nothing
+     * once the column exists, and can be deleted when no such database is left.
      */
-    private Map<String, Lot> replayFills(Portfolio p) {
-        Map<String, Lot> lots = new TreeMap<>();
-        BigDecimal cash = p.initialDeposit();
-        List<Long> filled = db.sql("""
-                SELECT id FROM decisions WHERE portfolio_id = ? AND status = 'FILLED'
-                ORDER BY fill_date, id""")
-                .param(p.id()).query(Long.class).list();
-        for (long id : filled) {
-            Decision d = decision(id);
-            cash = rebalance(cash, lots, d, d.fillDate());
+    @PostConstruct
+    void addCostBasisColumn() {
+        int present = db.sql("SELECT COUNT(*) FROM pragma_table_info('holdings') WHERE name = 'cost_basis'")
+                .query(Integer.class).single();
+        if (present > 0) {
+            return;
         }
-        return lots;
+        tx.executeWithoutResult(status -> {
+            db.sql("ALTER TABLE holdings ADD COLUMN cost_basis TEXT NOT NULL DEFAULT '0'").update();
+            for (Portfolio p : list(true)) {
+                Fill fill = new Fill(p.initialDeposit(), List.of());
+                List<Long> filled = db.sql("""
+                        SELECT id FROM decisions WHERE portfolio_id = ? AND status = 'FILLED'
+                        ORDER BY fill_date, id""")
+                        .param(p.id()).query(Long.class).list();
+                for (long id : filled) {
+                    Decision d = decision(id);
+                    fill = rebalance(fill.cash(), fill.holdings(), d, d.fillDate());
+                }
+                for (Holding h : fill.holdings()) {
+                    db.sql("UPDATE holdings SET cost_basis = ? WHERE portfolio_id = ? AND symbol = ?")
+                            .params(h.costBasis().toPlainString(), p.id(), h.symbol())
+                            .update();
+                }
+            }
+        });
     }
 
     /** The mark job: value every active portfolio at today's close, one point on its equity curve. */
@@ -385,8 +396,9 @@ public class Portfolios {
     // -------------------------------------------------------------------- helpers
 
     private List<Holding> holdings(long portfolioId) {
-        return db.sql("SELECT symbol, shares FROM holdings WHERE portfolio_id = ? ORDER BY symbol").param(portfolioId)
-                .query((rs, row) -> new Holding(rs.getString("symbol"), dec(rs, "shares")))
+        return db.sql("SELECT symbol, shares, cost_basis FROM holdings WHERE portfolio_id = ? ORDER BY symbol")
+                .param(portfolioId)
+                .query((rs, row) -> new Holding(rs.getString("symbol"), dec(rs, "shares"), dec(rs, "cost_basis")))
                 .list();
     }
 

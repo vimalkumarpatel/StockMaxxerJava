@@ -15,7 +15,8 @@ public final class Model {
     public record Portfolio(long id, String name, BigDecimal initialDeposit, BigDecimal cash,
                             String benchmark, String engine, LocalDate createdOn, boolean archived) {}
 
-    public record Holding(String symbol, BigDecimal shares) {}
+    /** Shares held, and what was paid for them (average cost), recorded at every fill. */
+    public record Holding(String symbol, BigDecimal shares, BigDecimal costBasis) {}
 
     /** A holding valued at the simulated day's close: market value, average cost basis, and its share of NAV. */
     public record Position(String symbol, BigDecimal shares, BigDecimal marketValue, BigDecimal costBasis,

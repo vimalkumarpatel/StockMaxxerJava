@@ -124,6 +124,29 @@ class LifecycleTest {
     }
 
     @Test
+    void aDatabaseFromBeforeCostBasisWasRecordedIsMigratedToTheSameValues() {
+        Portfolio p = portfolios.create("Old", null, null, Engines.QUANT_ONLY);
+        portfolios.accept(p.id(), portfolios.propose(p.id()).id());
+        TestDb.nightly(world);                                                  // first fill
+        portfolios.accept(p.id(), portfolios.decisions(p.id()).getFirst().id());
+        TestDb.nightly(world);                                                  // second fill rebalances
+        Map<String, BigDecimal> recorded = costBasis(p);
+
+        world.db().sql("ALTER TABLE holdings DROP COLUMN cost_basis").update();  // what an older database looks like
+        portfolios.addCostBasisColumn();
+        portfolios.addCostBasisColumn();                                        // a second start does nothing
+
+        Map<String, BigDecimal> migrated = costBasis(p);
+        assertThat(migrated.keySet()).isEqualTo(recorded.keySet());
+        recorded.forEach((symbol, cost) -> assertThat(migrated.get(symbol)).as(symbol).isEqualByComparingTo(cost));
+    }
+
+    private Map<String, BigDecimal> costBasis(Portfolio p) {
+        return portfolios.detail(p.id()).holdings().stream()
+                .collect(Collectors.toMap(Position::symbol, Position::costBasis));
+    }
+
+    @Test
     void anIgnoredRecommendationLeavesThePortfolioUnchanged() {
         Portfolio p = portfolios.create("Ignore", null, null, null);
         Decision d = portfolios.propose(p.id());

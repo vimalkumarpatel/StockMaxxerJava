@@ -12,7 +12,7 @@ import org.sqlite.SQLiteDataSource;
 /** A fresh, seeded SQLite file per test, wired the same way Spring wires the app (no Spring context needed). */
 final class TestDb {
 
-    record World(Market market, Portfolios portfolios) {}
+    record World(JdbcClient db, Market market, Portfolios portfolios) {}
 
     private TestDb() {}
 
@@ -24,7 +24,7 @@ final class TestDb {
         TransactionTemplate tx = new TransactionTemplate(new DataSourceTransactionManager(ds));
         Market market = new Market(db, tx);
         market.seed();
-        return new World(market, new Portfolios(db, market, tx));
+        return new World(db, market, new Portfolios(db, market, tx));
     }
 
     /** The market side of a night: a new simulated day and its bars. */
