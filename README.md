@@ -173,6 +173,7 @@ strings so they stay exact.
 | GET | `/portfolios/{id}/decisions` | Recommendations, newest first, with their lines. Each line has its prior and target weight, the action, the severity from the stock's latest filing, a plain-language `explanation`, and `quote`: the verified filing sentence behind a trim |
 | POST | `/portfolios/{id}/decisions/{decisionId}/accept` / `ignore` | |
 | GET | `/portfolios/{id}/equity` | NAV per day next to the benchmark, rebased to the deposit |
+| GET | `/portfolios/{id}/forecast` | The forecast range: `{horizonDays: 63, p10, p50, p90, note}`. A 5-day block bootstrap (10,000 paths, fixed seed 42) of the holdings' daily returns over the last 252 revealed days, at today's weights; cash returns 0. It is **historical dispersion, not a prediction**, and the UI says so |
 | GET | `/benchmarks` | The benchmarks a portfolio can be compared against, i.e. the allowed values for `benchmark` when creating one (the UI's Benchmark dropdown). Example: `["SPY","QQQ","IWM","DIA"]` |
 | GET | `/engines` | The recommendation engines you can choose, i.e. the allowed values for `engine`, each with a one-line description (the UI's Engine dropdown). Example: `[{"id":"quant_llm","description":"quant_only, then trims for new risks in each stock's latest 10-K or 10-Q ..."},{"id":"quant_only","description":"Top 8 of the benchmark's 12 largest holdings by 20-day return ..."}]` |
 | GET | `/clock` | The current simulated trading day. Recommendations are made for this day and can only be accepted while it lasts; the `advance` job (run by `scripts/nightly.sh`) moves it to the next real trading day. Example: `{"today":"2026-02-18"}` |
@@ -204,6 +205,7 @@ Errors return `{"error": "..."}`:
 | Spring Data JDBC repositories | Spring `JdbcClient` with plain SQL | Fewer lines than mapping composite keys and decimal converters |
 | 11 Maven modules | 3: `core`, `app`, `jobs` | Still separates the web app from the jobs; more modules split out as subsystems arrive |
 | Next.js + TypeScript + charts | Next.js, one plain-JSX page, tables | Fewest files; `/api` is proxied, so no CORS setup |
+| Forecast in exact decimals | The bootstrap uses doubles, rounded to cents at the end; weights stay fixed over the 63 days | It is a statistic, not money |
 | Beta / alpha / IR against the benchmark | Equity table with the benchmark rebased to the deposit | Shows the chosen benchmark with no statistics code |
 | A look-ahead guard | Decisions read only `bars`, which holds the days up to the simulated day; `history` is copied in one day at a time | Point-in-time holds by construction |
 | `archived_at` timestamp | An `archived` flag | Nothing reads the time |
@@ -222,7 +224,6 @@ Errors return `{"error": "..."}`:
 ## Not built yet
 
 These are covered by the long-term plan:
-- the forecast range
 - backtests and evals
 - the audit trail
 

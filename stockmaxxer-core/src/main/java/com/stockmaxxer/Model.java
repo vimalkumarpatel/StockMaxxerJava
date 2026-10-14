@@ -47,4 +47,7 @@ public final class Model {
     public record EquityPoint(LocalDate date, BigDecimal nav, BigDecimal benchmark) {}
 
     public record EngineInfo(String id, String description) {}
+
+    /** The range the NAV moved in past 63-day windows at today's weights (p10, p50, p90): not a prediction. */
+    public record ForecastRange(int horizonDays, BigDecimal p10, BigDecimal p50, BigDecimal p90, String note) {}
 }

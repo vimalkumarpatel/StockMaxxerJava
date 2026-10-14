@@ -35,6 +35,7 @@ export default function Home() {
   const [detail, setDetail] = useState(null);
   const [decisions, setDecisions] = useState([]);
   const [equity, setEquity] = useState([]);
+  const [forecast, setForecast] = useState(null);
   const [form, setForm] = useState({ name: '', initialDeposit: '1000.00', benchmark: 'SPY', engine: 'quant_llm' });
   const [error, setError] = useState('');
 
@@ -62,16 +63,19 @@ export default function Home() {
       setDetail(null);
       setDecisions([]);
       setEquity([]);
+      setForecast(null);
       return;
     }
-    const [d, ds, eq] = await Promise.all([
+    const [d, ds, eq, fc] = await Promise.all([
       api(`/portfolios/${id}`),
       api(`/portfolios/${id}/decisions`),
       api(`/portfolios/${id}/equity`),
+      api(`/portfolios/${id}/forecast`),
     ]);
     setDetail(d);
     setDecisions(ds);
     setEquity(eq);
+    setForecast(fc);
   }, []);
 
   useEffect(() => {
@@ -176,6 +180,13 @@ export default function Home() {
             NAV <b>{money(detail.nav)}</b> at the {detail.navDate} close · cash {money(detail.portfolio.cash)} ·
             benchmark {detail.portfolio.benchmark} · engine {detail.portfolio.engine}
           </p>
+          {forecast && (
+            <p className="note">
+              In past {forecast.horizonDays}-day windows, today's holdings would have ended between{' '}
+              <b>{money(forecast.p10)}</b> and <b>{money(forecast.p90)}</b> (10th–90th percentile, median {money(forecast.p50)}):
+              {' '}{forecast.note}.
+            </p>
+          )}
           {detail.holdings.length > 0 && (
             <table>
               <thead>

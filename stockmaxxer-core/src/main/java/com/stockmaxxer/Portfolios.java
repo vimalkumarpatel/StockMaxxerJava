@@ -384,6 +384,35 @@ public class Portfolios {
         return ids.size();
     }
 
+    /**
+     * The forecast range at today's close: each holding's daily returns over the last year of revealed bars, at its
+     * current share of NAV. Every symbol trades on the same days (real history, checked at fetch), so the returns
+     * line up by position; the shortest history sets the window.
+     */
+    public Model.ForecastRange forecast(long id) {
+        PortfolioDetail d = detail(id);
+        List<Position> held = d.holdings();
+        List<List<BigDecimal>> closes = held.stream()
+                .map(h -> market.closes(h.symbol(), d.navDate(), Forecast.LOOKBACK + 1)).toList();
+        int days = closes.stream().mapToInt(c -> c.size() - 1).min().orElse(0);
+        double[] weights = new double[held.size()];
+        double[][] returns = new double[held.size()][days];
+        for (int s = 0; s < held.size(); s++) {
+            weights[s] = held.get(s).weight().doubleValue();
+            List<BigDecimal> c = closes.get(s).subList(closes.get(s).size() - days - 1, closes.get(s).size());
+            for (int t = 0; t < days; t++) {
+                returns[s][t] = c.get(t + 1).doubleValue() / c.get(t).doubleValue() - 1;
+            }
+        }
+        Forecast.Range r = Forecast.range(d.nav().doubleValue(), weights, returns);
+        return new Model.ForecastRange(Forecast.HORIZON, cents(r.p10()), cents(r.p50()), cents(r.p90()),
+                "historical dispersion, not a prediction");
+    }
+
+    private static BigDecimal cents(double value) {
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_EVEN);
+    }
+
     /** Simplification: the chosen benchmark rebased to the deposit, instead of beta/alpha/IR statistics. */
     public List<EquityPoint> equity(long id) {
         Portfolio p = get(id);

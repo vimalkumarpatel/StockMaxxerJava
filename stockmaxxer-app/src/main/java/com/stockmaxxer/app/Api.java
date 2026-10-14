@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.stockmaxxer.Engines;
 import com.stockmaxxer.Market;
+import com.stockmaxxer.Model;
 import com.stockmaxxer.Model.Decision;
 import com.stockmaxxer.Model.EngineInfo;
 import com.stockmaxxer.Model.EquityPoint;
@@ -96,6 +97,12 @@ public class Api {
     @GetMapping("/portfolios/{id}/equity")
     public List<EquityPoint> equity(@PathVariable long id) {
         return portfolios.equity(id);
+    }
+
+    /** The range the NAV moved over past 63-day windows at today's weights: historical dispersion, not a prediction. */
+    @GetMapping("/portfolios/{id}/forecast")
+    public Model.ForecastRange forecast(@PathVariable long id) {
+        return portfolios.forecast(id);
     }
 
     @GetMapping("/benchmarks")
