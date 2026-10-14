@@ -59,7 +59,7 @@ class AuditTest {
         JsonNode recorded = w.portfolios().audit(p.id(), d.id()).getFirst().detail();
         List<String> universe = Market.UNIVERSES.get("DIA");
         Map<String, BigDecimal> again = Engines.target(p.engine(), d.asOf(), w.market(), universe,
-                w.signals().flags(universe, d.asOf())).weights();
+                w.signals().flags(universe, d.asOf()), w.signals().withRiskFactors(universe, d.asOf())).weights();
         assertThat(recorded.path("targetWeights").size()).isEqualTo(again.size());
         again.forEach((symbol, weight) ->
                 assertThat(new BigDecimal(recorded.path("targetWeights").path(symbol).asText())).isEqualByComparingTo(weight));

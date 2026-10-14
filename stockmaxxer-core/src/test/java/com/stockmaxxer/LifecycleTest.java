@@ -151,7 +151,7 @@ class LifecycleTest {
         for (String s : spy) {
             flags.put(s, new Signals.Flag(4, "acc", "10-Q", LocalDate.of(2025, 11, 19), "A risk.", null, null));
         }
-        Engines.Target t = Engines.target(Engines.QUANT_LLM, today, market, spy, flags);
+        Engines.Target t = Engines.target(Engines.QUANT_LLM, today, market, spy, flags, java.util.Set.copyOf(spy));
         String held = t.flags().keySet().iterator().next();
         String explanation = Explanations.explain(held, BigDecimal.ZERO, t.weights().get(held), t);
         assertThat(explanation).contains("Its 10-Q of 2025-11-19 adds a risk at level 4 of 5");

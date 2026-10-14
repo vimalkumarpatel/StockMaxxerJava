@@ -28,6 +28,9 @@ final class TestDb {
     static final int DAYS = 80;                                      // weekdays of fixture history
     static final int START_INDEX = 30;                               // the clock starts on the 31st day
 
+    static final String BASE_10K = "<p>Item 1A. Risk Factors</p>"
+            + "<p>Our business faces many risks that could harm our results of operations.</p><p>Item 1B. None.</p>";
+
     private TestDb() {}
 
     static World seeded(Path dir) {
@@ -41,6 +44,12 @@ final class TestDb {
         market.startAt(start);
         // Replay only, with the cache in the test's temp folder: a test can never call Claude.
         Llm llm = new Llm(dir.toString(), true, "test-model", "");
+        // Every stock gets a 10-K with an Item 1A, so every stock may be recommended. Scored: it is only a baseline.
+        Edgar edgar = new Edgar(db, "", dir.toString());
+        for (String symbol : Edgar.stocks()) {
+            edgar.store(symbol, 0, "10-K", LocalDate.of(2025, 1, 2), "base-" + symbol, "https://x", BASE_10K);
+        }
+        db.sql("UPDATE filings SET scored = 1").update();
         Signals signals = new Signals(db, llm, tx);
         return new World(db, market, signals, new Portfolios(db, market, signals, new Audit(db), tx), llm);
     }

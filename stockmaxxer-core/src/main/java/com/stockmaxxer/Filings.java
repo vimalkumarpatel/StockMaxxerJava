@@ -41,8 +41,10 @@ public final class Filings {
 
     /**
      * The Item 1A section: for each "Item 1A. Risk Factors" heading, the text up to the next end marker. A span
-     * that contains another heading is skipped. The longest span left wins, which skips the table of contents.
-     * Empty if there is no such heading (Intel's 10-K, for one, has its own layout without item headings).
+     * that contains another heading is skipped, and so is a span under 10 words: that is a contents line such as
+     * "Item 1A. Risk Factors Page 41", not a section. The longest span left wins. Empty if there is no section
+     * (Intel's filings, for one, have only the contents line). The shortest real section seen, a 10-Q's "no
+     * material changes" paragraph, is about 20 words.
      */
     public static String item1a(String text, String form) {
         Pattern end = form.equals("10-K") ? END_10K : END_10Q;
@@ -58,7 +60,7 @@ public final class Filings {
                 continue;
             }
             String span = text.substring(start.start(), stop.start()).trim();
-            if (span.length() > best.length()) {
+            if (span.split("\\s+").length >= 10 && span.length() > best.length()) {
                 best = span;
             }
         }

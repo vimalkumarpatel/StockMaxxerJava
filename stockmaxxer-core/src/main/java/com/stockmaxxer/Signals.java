@@ -4,7 +4,9 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -138,6 +140,24 @@ public class Signals {
                         FROM filings f WHERE f.filed_on >= ? AND f.filed_on < ? ORDER BY f.symbol""")
                 .params(previousDay.toString(), day.toString())
                 .query(String.class).list();
+    }
+
+    /**
+     * The stocks that can be recommended on {@code asOf}: those whose latest 10-K filed before that day has an
+     * Item 1A section. A stock with no 10-K before that day is left out too: there is nothing to check.
+     */
+    public Set<String> withRiskFactors(List<String> symbols, LocalDate asOf) {
+        Set<String> allowed = new TreeSet<>();
+        for (String symbol : symbols) {
+            boolean hasItem1a = db.sql("""
+                            SELECT item1a <> '' FROM filings WHERE symbol = ? AND form = '10-K' AND filed_on < ?
+                            ORDER BY filed_on DESC, accession DESC LIMIT 1""")
+                    .params(symbol, asOf.toString()).query(Boolean.class).optional().orElse(false);
+            if (hasItem1a) {
+                allowed.add(symbol);
+            }
+        }
+        return allowed;
     }
 
     /** For the audit: how many quotes failed verification in each stock's latest scored filing before asOf. */

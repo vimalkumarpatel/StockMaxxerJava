@@ -47,10 +47,11 @@ public final class Engines {
      * Target weights by symbol, including CASH, plus the facts behind them that the explanations use:
      * every eligible stock ranked by 20-day price change, the names held at the 15% cap, the severity
      * behind each trim and the filing it came from, and the scale applied to the trims when the cash cap
-     * bound (1 if it didn't).
+     * bound (1 if it didn't). noRiskFactors are the universe stocks left out because their latest 10-K has no
+     * Item 1A.
      */
     public record Target(Map<String, BigDecimal> weights, Map<String, Integer> severity, Map<String, Signals.Flag> flags,
-                         List<Stat> ranked, Set<String> capped, BigDecimal trimScale) {}
+                         List<Stat> ranked, Set<String> capped, BigDecimal trimScale, Set<String> noRiskFactors) {}
 
     /** quant_only's weights (without CASH), the ranking they came from, and the names pinned at the cap. */
     record Base(Map<String, BigDecimal> weights, List<Stat> ranked, Set<String> capped) {}
@@ -64,10 +65,17 @@ public final class Engines {
         return ALL.stream().anyMatch(e -> e.id().equals(engine));
     }
 
-    /** Target weights for one universe (the portfolio's benchmark picks it). {@code flags} are the filing signals on asOf. */
+    /**
+     * Target weights for one universe (the portfolio's benchmark picks it). {@code flags} are the filing signals
+     * on asOf. Only the stocks in {@code allowed} can be held: a stock whose latest 10-K has no Item 1A can't be
+     * checked for risks, so both engines leave it out.
+     */
     public static Target target(String engine, LocalDate asOf, Market market, List<String> universe,
-                                Map<String, Signals.Flag> flags) {
-        Base base = quantOnly(asOf, market, universe);
+                                Map<String, Signals.Flag> flags, Set<String> allowed) {
+        List<String> usable = universe.stream().filter(allowed::contains).toList();
+        Set<String> leftOut = new TreeSet<>(universe);
+        leftOut.removeAll(usable);
+        Base base = quantOnly(asOf, market, usable);
         Weights w = switch (engine) {
             case QUANT_ONLY -> withCash(base.weights(), Map.of(), BigDecimal.ONE);
             case QUANT_LLM -> trimmed(base.weights(), flags);
@@ -76,7 +84,7 @@ public final class Engines {
         Map<String, Signals.Flag> used = new TreeMap<>(flags);
         used.keySet().retainAll(w.severity().keySet());   // only the flags that trimmed a held name
         used.values().removeIf(f -> f.severity() == 0);
-        return new Target(w.weights(), w.severity(), used, base.ranked(), base.capped(), w.trimScale());
+        return new Target(w.weights(), w.severity(), used, base.ranked(), base.capped(), w.trimScale(), leftOut);
     }
 
     /** Rank by 20-day return, keep the top 8, weight each in proportion to 1/volatility, scaled to 0.98, capped at 15%. */

@@ -54,7 +54,8 @@ public class Backtest {
         for (int i = 0; i + 1 < days.size(); i++) {
             LocalDate day = days.get(i);
             LocalDate next = days.get(i + 1);
-            Engines.Target target = Engines.target(engine, day, market, universe, signals.flags(universe, day));
+            Engines.Target target = Engines.target(engine, day, market, universe, signals.flags(universe, day),
+                    signals.withRiskFactors(universe, day));
             // Fill at the next open: value everything, then buy each target weight.
             BigDecimal navAtOpen = cash;
             for (var e : shares.entrySet()) {

@@ -27,7 +27,9 @@ cd stockmaxxer-ui && npm install && npm run dev                     # UI on http
 stored history. Run `scripts/fetch.sh` to download the days that are new since then. Catching up from
 2026-01-02 to today is about 200 nights; each night starts 6 JVMs, so it is slow but correct.
 
-After a change to `schema.sql`, delete `data/stockmaxxer.sqlite*` and seed again: there are no migrations.
+After a change to `schema.sql` or to how filings are read, delete `data/stockmaxxer.sqlite*`, then seed again and
+run `scripts/fetch.sh`. There are no migrations. The raw filings and Claude's answers are kept in `data/`, so
+nothing is downloaded or asked twice.
 
 ## Demo to a team
 
@@ -208,7 +210,12 @@ names the risks; the code decides the weights.
    `signals` job prints how many quotes passed and failed. On NVDA's 11 filings, 80 of 80 passed.
 6. **The trim:** on each day, a stock's severity comes from its latest scored filing filed **before** that day.
    It is the highest severity among that filing's **verified** firm-scope events. The UI shows the quote under
-   the line's explanation. Trim = weight × severity × 10%.
+   the line's explanation.
+7. **No Item 1A, no recommendation:** a stock can be recommended only if its latest 10-K filed before that day
+   has an Item 1A section. This applies to both engines, so the comparison stays fair. Otherwise its risks
+   can't be checked, so the stock is left out and a held position is sold. Its line says why, and the
+   proposal's audit row lists it under `noRiskFactors`. Today this leaves out INTC: its filings have only the
+   contents line "Item 1A. Risk Factors Pages 37-51". Trim = weight × severity × 10%.
    Trimmed weight goes to cash, and cash is capped at 15% by scaling every trim down pro-rata.
 
 | Severity | Meaning |
@@ -333,7 +340,8 @@ Errors return `{"error": "..."}`:
 | Universe screen (SIC codes, 10-K count, dollar volume) | Each benchmark's **12 largest holdings** (on 2026-10-13), one share class per company. A portfolio ranks its own benchmark's list | A rule, not a hand-picked list, with no screen to build. It has survivorship bias: these are today's largest names |
 | σ₆₀, 12-month momentum, top 15 | Top 8 by 20-day return, weights ∝ 1/σ₂₀ (15% name cap kept) | Same shape; a month of history is enough |
 | Sector cap, no-trade band | Not applied | 12 names per universe is too few for a sector cap, and every accepted recommendation simply rebalances to its target |
-| Item 1A extractor | The longest span from an "Item 1A. Risk Factors" heading to the next "Item 1B/1C/2" (10-K) or "Item 2" (10-Q) | A few lines. A filing without that heading (Intel's 10-K has its own layout) gets no signal |
+| Item 1A extractor | The longest span from an "Item 1A. Risk Factors" heading to the next "Item 1B/1C/2" (10-K) or "Item 2" (10-Q). A span under 10 words is a contents line, not a section | A few lines. The shortest real section seen ("no material changes") is about 20 words |
+| Which stocks need an Item 1A | Only the latest **10-K** must have one, so a 10-Q without one (GS) doesn't remove the stock | Many 10-Qs only refer back to the 10-K's risk factors |
 | Filing diff against the governing filing | Each filing against the previous filing of the **same form**; the first one of each form is a baseline with no events | No form-mixing rules. Filings are fetched from 2024-01-01, so every filing in the replay has a predecessor |
 | Acceptance time from the SGML header | EDGAR's filing date; a filing counts from the **next** day | Never too early, and no time zones |
 | Severity aggregation, absorbing severity 5, co-occurrence backstop | A stock's severity is the **highest firm-scope** severity in its **latest scored** filing; events the model calls industry-wide are dropped. No "5 stays until superseded", no time decay, no clustering of the same event across names | Short and explainable. As in the Python version, the max over ~10 events per filing is usually 4, so most held names are trimmed and the cash cap binds |

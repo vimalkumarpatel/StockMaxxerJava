@@ -18,6 +18,10 @@ final class Explanations {
         if (symbol.equals(Engines.CASH)) {
             return cash(prior, target, t);
         }
+        if (t.noRiskFactors().contains(symbol)) {
+            return "The latest 10-K of " + symbol + " has no Item 1A (Risk Factors) section, so the system does not"
+                    + " use this stock. " + change(prior, target);
+        }
         int rank = rankOf(symbol, t.ranked());
         if (rank == 0) {
             return "There is not sufficient price history for " + symbol + ". " + change(prior, target);

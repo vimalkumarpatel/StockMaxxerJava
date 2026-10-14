@@ -158,7 +158,8 @@ public class Portfolios {
             BigDecimal nav = nav(p.cash(), holdings, today, false);
             Map<String, BigDecimal> prior = currentWeights(p.cash(), holdings, nav, today);
             List<String> universe = Market.UNIVERSES.get(p.benchmark());
-            Engines.Target target = Engines.target(p.engine(), today, market, universe, signals.flags(universe, today));
+            Engines.Target target = Engines.target(p.engine(), today, market, universe, signals.flags(universe, today),
+                    signals.withRiskFactors(universe, today));
 
             db.sql("INSERT INTO decisions (portfolio_id, as_of, engine, status, nav) VALUES (?, ?, ?, ?, ?)")
                     .params(id, today.toString(), p.engine(), Status.PROPOSED.name(), nav.toPlainString())
@@ -326,6 +327,7 @@ public class Portfolios {
         detail.put("capped", target.capped());
         detail.put("flags", flags);
         detail.put("droppedQuotes", signals.dropped(universe, today));
+        detail.put("noRiskFactors", target.noRiskFactors());
         return detail;
     }
 
