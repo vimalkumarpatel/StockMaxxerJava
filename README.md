@@ -75,7 +75,9 @@ strings so they stay exact.
 | GET | `/portfolios/{id}/decisions` | recommendations, newest first, with their lines |
 | POST | `/portfolios/{id}/decisions/{decisionId}/accept` / `ignore` | |
 | GET | `/portfolios/{id}/equity` | NAV per day next to the benchmark, rebased to the deposit |
-| GET | `/benchmarks`, `/engines`, `/clock` | |
+| GET | `/benchmarks` | The benchmarks a portfolio can be compared against, i.e. the allowed values for `benchmark` when creating one (the UI's Benchmark dropdown). Example: `["SPY","QQQ","IWM","DIA"]` |
+| GET | `/engines` | The recommendation engines you can choose, i.e. the allowed values for `engine`, each with a one-line description (the UI's Engine dropdown). Example: `[{"id":"quant_llm","description":"quant_only, then SIMULATED severity trims ..."},{"id":"quant_only","description":"Top 8 of 12 by 20-day return ..."}]` |
+| GET | `/clock` | The current simulated trading day. Recommendations are made for this day and can only be accepted while it lasts; the `advance` job (run by `scripts/nightly.sh`) moves it to the next weekday. Example: `{"today":"2026-02-18"}` |
 
 Errors return `{"error": "..."}`:
 - 400 for bad input
