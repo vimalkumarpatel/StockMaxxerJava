@@ -60,7 +60,7 @@ public class Jobs implements ApplicationRunner {
             }
             case "fetch" -> "downloaded " + market.fetch() + " new bar(s)";
             case "filings" -> "stored " + edgar.download() + " new filing(s)";
-            case "signals" -> "scored " + signals.scoreAll() + " filing(s)";
+            case "signals" -> "scored " + signals.scoreAll() + " filing(s); quotes so far: " + signals.quoteCounts();
             case "advance" -> "the simulated day is now " + market.advance();
             case "prices" -> "revealed " + market.reveal(market.today()) + " bar(s) for " + market.today();
             case "expire" -> "expired " + portfolios.expireAll() + " unaccepted recommendation(s)";

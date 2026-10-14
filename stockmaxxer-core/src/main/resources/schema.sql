@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS decision_lines (
   severity      INTEGER NOT NULL,
   action        TEXT NOT NULL,
   explanation   TEXT NOT NULL,
+  quote         TEXT,           -- the verified filing sentence behind a trim, NULL if not trimmed
   PRIMARY KEY (decision_id, symbol)
 );
 
@@ -103,8 +104,9 @@ CREATE TABLE IF NOT EXISTS filings (
 );
 CREATE INDEX IF NOT EXISTS filings_by_symbol ON filings (symbol, form, filed_on);
 
--- The risks Claude found in one filing's new Item 1A sentences. scope is 'firm' or 'industry'; only firm-scope
--- events can trim a weight. quote is the sentence Claude says it read the risk in.
+-- The risks Claude found in one filing's new Item 1A sentences. scope is 'firm' or 'industry'. quote is the
+-- sentence Claude says it read the risk in; verified = 1 when it is an exact substring of the stored Item 1A.
+-- Only verified firm-scope events can trim a weight.
 CREATE TABLE IF NOT EXISTS events (
   accession TEXT NOT NULL REFERENCES filings (accession),
   n         INTEGER NOT NULL,
@@ -112,5 +114,6 @@ CREATE TABLE IF NOT EXISTS events (
   severity  INTEGER NOT NULL,
   scope     TEXT NOT NULL,
   quote     TEXT NOT NULL,
+  verified  INTEGER NOT NULL,
   PRIMARY KEY (accession, n)
 );

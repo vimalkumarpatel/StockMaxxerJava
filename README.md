@@ -113,8 +113,13 @@ names the risks; the code decides the weights.
    prompt version and the exact prompt. A cached answer is always reused, so a second run makes no API calls.
    With `SM_LLM_REPLAY=1`, a cache miss is an error instead of a call. A cut-off or refused answer is never
    cached: it would replay forever as "no risks".
-5. **The trim:** on each day, a stock's severity comes from its latest scored filing filed **before** that day.
-   It is the highest severity among that filing's firm-scope events. Trim = weight × severity × 10%.
+5. **Quote verification:** each quote must be an exact substring of the stored Item 1A, after the same
+   normalizing. Both texts go through the same function, so the check and the UI use the same text. A
+   paraphrased or invented quote is kept, but marked `verified = 0`, and it can never move a weight. The
+   `signals` job prints how many quotes passed and failed. On NVDA's 11 filings, 80 of 80 passed.
+6. **The trim:** on each day, a stock's severity comes from its latest scored filing filed **before** that day.
+   It is the highest severity among that filing's **verified** firm-scope events. The UI shows the quote under
+   the line's explanation. Trim = weight × severity × 10%.
    Trimmed weight goes to cash, and cash is capped at 15% by scaling every trim down pro-rata.
 
 | Severity | Meaning |
@@ -165,7 +170,7 @@ strings so they stay exact.
 | DELETE | `/portfolios/{id}` | archive (soft delete) |
 | POST | `/portfolios/{id}/restore` | un-archive |
 | POST | `/portfolios/{id}/recommendations` | generate today's recommendation now |
-| GET | `/portfolios/{id}/decisions` | Recommendations, newest first, with their lines. Each line has its prior and target weight, the action, the severity from the stock's latest filing and a plain-language `explanation` |
+| GET | `/portfolios/{id}/decisions` | Recommendations, newest first, with their lines. Each line has its prior and target weight, the action, the severity from the stock's latest filing, a plain-language `explanation`, and `quote`: the verified filing sentence behind a trim |
 | POST | `/portfolios/{id}/decisions/{decisionId}/accept` / `ignore` | |
 | GET | `/portfolios/{id}/equity` | NAV per day next to the benchmark, rebased to the deposit |
 | GET | `/benchmarks` | The benchmarks a portfolio can be compared against, i.e. the allowed values for `benchmark` when creating one (the UI's Benchmark dropdown). Example: `["SPY","QQQ","IWM","DIA"]` |
@@ -217,7 +222,6 @@ Errors return `{"error": "..."}`:
 ## Not built yet
 
 These are covered by the long-term plan:
-- quote verification
 - the forecast range
 - backtests and evals
 - the audit trail

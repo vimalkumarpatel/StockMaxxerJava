@@ -370,7 +370,7 @@ function DecisionCard({ d, onDecide }) {
           {d.lines.map((l) => (
             <tr key={l.symbol}>
               <td>{l.symbol}</td><td>{pct(l.priorWeight)}</td><td>{pct(l.targetWeight)}</td><td>{l.action}</td>
-              <td>{l.severity || ''}</td><td className="why">{l.explanation}</td>
+              <td>{l.severity || ''}</td><td className="why">{l.explanation}{l.quote && <blockquote className="quote">“{l.quote}”</blockquote>}</td>
             </tr>
           ))}
         </tbody>

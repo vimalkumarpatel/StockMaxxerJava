@@ -168,11 +168,12 @@ public class Portfolios {
                 BigDecimal to = target.weights().getOrDefault(symbol, BigDecimal.ZERO);
                 db.sql("""
                         INSERT INTO decision_lines
-                          (decision_id, symbol, prior_weight, target_weight, severity, action, explanation)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""")
+                          (decision_id, symbol, prior_weight, target_weight, severity, action, explanation, quote)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""")
                         .params(newId, symbol, from.toPlainString(), to.toPlainString(),
                                 target.severity().getOrDefault(symbol, 0), action(symbol, from, to),
-                                Explanations.explain(symbol, from, to, target))
+                                Explanations.explain(symbol, from, to, target),
+                                target.flags().containsKey(symbol) ? target.flags().get(symbol).quote() : null)
                         .update();
             }
             return newId;
@@ -222,7 +223,7 @@ public class Portfolios {
         List<Line> lines = db.sql("SELECT * FROM decision_lines WHERE decision_id = ? ORDER BY symbol").param(id)
                 .query((rs, row) -> new Line(rs.getString("symbol"), dec(rs, "prior_weight"),
                         dec(rs, "target_weight"), rs.getInt("severity"), rs.getString("action"),
-                        rs.getString("explanation")))
+                        rs.getString("explanation"), rs.getString("quote")))
                 .list();
         return db.sql("SELECT * FROM decisions WHERE id = ?").param(id)
                 .query((rs, row) -> new Decision(rs.getLong("id"), rs.getLong("portfolio_id"),

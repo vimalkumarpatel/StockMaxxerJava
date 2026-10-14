@@ -12,6 +12,7 @@ const css = `
   .error { color: #b00020; }
   .total td { font-weight: 600; border-top: 1px solid #c3c2b7; }
   td.why { min-width: 320px; max-width: 520px; font-size: 13px; line-height: 1.4; color: #52514e; }
+  blockquote.quote { margin: 6px 0 0; padding-left: 8px; border-left: 3px solid #d6d3cc; font-style: italic; }
   summary { font-size: 1.17em; font-weight: bold; margin: 1em 0; cursor: pointer; }
   summary.small { font-size: 14px; font-weight: normal; margin: 4px 0; color: #52514e; }
   .chart { position: relative; max-width: 760px; }

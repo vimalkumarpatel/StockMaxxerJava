@@ -36,16 +36,27 @@ class SignalsTest {
         Files.writeString(dir.resolve("llm-cache").resolve(w.llm().key(prompt) + ".json"), """
                 {"model": "test-model", "events": {"events": [
                   {"type": "export_controls", "severity": 4, "scope": "firm", "quote": "%s"},
-                  {"type": "macro_demand", "severity": 5, "scope": "industry", "quote": "%s"}]}}""".formatted(quote, quote));
+                  {"type": "macro_demand", "severity": 5, "scope": "industry", "quote": "%s"},
+                  {"type": "litigation", "severity": 5, "scope": "firm", "quote": "We face a lawsuit that threatens our business."}]}}"""
+                .formatted(quote, quote));
 
         assertThat(w.signals().scoreAll()).isEqualTo(2);   // the old one is the baseline: no call
-        assertThat(w.db().sql("SELECT COUNT(*) FROM events").query(Integer.class).single()).isEqualTo(2);
+        assertThat(w.db().sql("SELECT COUNT(*) FROM events").query(Integer.class).single()).isEqualTo(3);
+        assertThat(w.signals().quoteCounts()).isEqualTo("2 verified, 1 dropped");
 
         assertThat(w.signals().flags(List.of("NVDA"), FILED)).as("not on the day it is filed").isEmpty();
         Signals.Flag flag = w.signals().flags(List.of("NVDA"), FILED.plusDays(1)).get("NVDA");
-        assertThat(flag.severity()).as("the industry-wide 5 is dropped").isEqualTo(4);
+        assertThat(flag.severity()).as("the industry-wide 5 and the invented quote's 5 are both dropped").isEqualTo(4);
         assertThat(flag.quote()).isEqualTo(quote);
         assertThat(flag.accession()).isEqualTo("acc-new");
+    }
+
+    @Test
+    void aQuoteMustBeAnExactSubstringOfTheStoredSection() {
+        String item1a = "Item 1A. Risk Factors We rely on \"third-party\" foundries to make our chips.";
+        assertThat(Signals.verified("We rely on \u201cthird-party\u201d  foundries", item1a)).as("same text after normalizing").isTrue();
+        assertThat(Signals.verified("We depend on third-party foundries", item1a)).as("paraphrased").isFalse();
+        assertThat(Signals.verified("", item1a)).isFalse();
     }
 
     @Test

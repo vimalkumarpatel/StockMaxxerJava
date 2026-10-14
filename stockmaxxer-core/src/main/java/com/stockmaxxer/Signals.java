@@ -71,8 +71,10 @@ public class Signals {
             List<Llm.Event> events = answer == null ? List.of() : answer.events().events();
             for (int n = 0; n < events.size(); n++) {
                 Llm.Event e = events.get(n);
-                db.sql("INSERT INTO events (accession, n, type, severity, scope, quote) VALUES (?, ?, ?, ?, ?, ?)")
-                        .params(f.accession(), n, e.type(), e.severity(), e.scope(), e.quote()).update();
+                db.sql("INSERT INTO events (accession, n, type, severity, scope, quote, verified) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                        .params(f.accession(), n, e.type(), e.severity(), e.scope(), e.quote(),
+                                verified(e.quote(), f.item1a()) ? 1 : 0)
+                        .update();
             }
             db.sql("UPDATE filings SET scored = 1, new_sentences = ?, llm_key = ?, llm_model = ? WHERE accession = ?")
                     .params(added.size(), answer == null ? null : answer.key(), answer == null ? null : answer.model(),
@@ -82,8 +84,23 @@ public class Signals {
     }
 
     /**
+     * Quote verification: the quote must be an exact substring of the stored Item 1A, after the same normalizing
+     * the filing text had. A paraphrased or invented quote fails, and its event can never move a weight.
+     */
+    static boolean verified(String quote, String item1a) {
+        String q = Filings.normalizeText(quote);
+        return !q.isEmpty() && item1a.contains(q);
+    }
+
+    /** How many quotes passed and failed verification, over every event stored. */
+    public String quoteCounts() {
+        return db.sql("SELECT COALESCE(SUM(verified), 0) || ' verified, ' || (COUNT(*) - COALESCE(SUM(verified), 0)) || ' dropped' FROM events")
+                .query(String.class).single();
+    }
+
+    /**
      * The flagged stocks on {@code asOf}: for each one, its latest scored filing filed before that day, and the most
-     * severe firm-scope event in it. A filing counts from the day after it was filed. Simplifications: the latest
+     * severe verified firm-scope event in it. A filing counts from the day after it was filed. Simplifications: the latest
      * filing replaces the earlier ones (no "severity 5 stays until superseded", no time decay), events the model
      * calls industry-wide are dropped, and a newer filing that isn't scored yet is ignored until it is.
      */
@@ -95,7 +112,7 @@ public class Signals {
                             FROM filings f JOIN events e ON e.accession = f.accession
                             WHERE f.accession = (SELECT accession FROM filings WHERE symbol = ? AND scored = 1 AND filed_on < ?
                                                  ORDER BY filed_on DESC, accession DESC LIMIT 1)
-                              AND e.scope = 'firm' AND e.severity > 0
+                              AND e.scope = 'firm' AND e.verified = 1 AND e.severity > 0
                             ORDER BY e.severity DESC, e.n LIMIT 1""")
                     .params(symbol, asOf.toString())
                     .query((rs, row) -> new Flag(rs.getInt("severity"), rs.getString("accession"), rs.getString("form"),
