@@ -292,8 +292,8 @@ Each job runs on its own: `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.ja
 | `backtest` | `--benchmark=SPY --from=2026-01-02`: both engines and buy-and-hold of the benchmark over the revealed days (see below) |
 | `evals` | Severity against the next 20 trading days' excess return, one row per filing (see below) |
 | `signals` | Asks Claude about the new risk factors of every filing not scored yet, through the replay cache (`scripts/fetch.sh`) |
-| `advance` | Moves the simulated day to the next day SPY traded (real holidays are skipped) |
-| `prices` | Reveals today: copies today's bars from `history` into `bars` |
+| `advance` | Moves the simulated day to the next day SPY traded (real holidays are skipped) and reveals its bars, in one transaction so the UI never sees a day without bars |
+| `prices` | Reveals today: copies today's bars from `history` into `bars` (already done by `advance`; a safe re-run) |
 | `expire` | Earlier days' unaccepted recommendations → `EXPIRED` |
 | `settle` | Accepted recommendations → `FILLED` at today's open |
 | `mark` | Values every active portfolio at today's close (the equity curve) |
@@ -388,4 +388,5 @@ stockmaxxer-ui/      the Next.js page
 scripts/nightly.sh   one simulated night (offline)
 scripts/fetch.sh     download what is new (network)
 scripts/demo.sh      a day-by-day team demo (offline)
+scripts/stop.sh      frees ports 8080 and 3000: stops the API and UI cleanly, kills them after 15 s
 ```
