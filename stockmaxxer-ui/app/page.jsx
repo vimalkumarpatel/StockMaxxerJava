@@ -29,6 +29,7 @@ export default function Home() {
   const [benchmarks, setBenchmarks] = useState([]);
   const [engines, setEngines] = useState([]);
   const [portfolios, setPortfolios] = useState([]);
+  const [navs, setNavs] = useState({});
   const [showArchived, setShowArchived] = useState(false);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -49,8 +50,11 @@ export default function Home() {
 
   const loadList = useCallback(async () => {
     const [clock, list] = await Promise.all([api('/clock'), api(`/portfolios?includeArchived=${showArchived}`)]);
+    // Simplification: one detail call per portfolio for its NAV, instead of adding NAV to the list endpoint.
+    const details = await Promise.all(list.map((p) => api(`/portfolios/${p.id}`)));
     setToday(clock.today);
     setPortfolios(list);
+    setNavs(Object.fromEntries(details.map((d) => [d.portfolio.id, d.nav])));
   }, [showArchived]);
 
   const loadPortfolio = useCallback(async (id) => {
@@ -144,13 +148,14 @@ export default function Home() {
       </h2>
       <table>
         <thead>
-          <tr><th>Name</th><th>Deposit</th><th>Benchmark</th><th>Engine</th><th>Created</th><th /></tr>
+          <tr><th>Name</th><th>Deposit</th><th>NAV</th><th>Benchmark</th><th>Engine</th><th>Created</th><th /></tr>
         </thead>
         <tbody>
           {portfolios.map((p) => (
             <tr key={p.id} className={p.id === selected ? 'selected' : p.archived ? 'muted' : ''}>
               <td><button className="link" onClick={() => setSelected(p.id)}>{p.name}</button></td>
               <td>{money(p.initialDeposit)}</td>
+              <td>{money(navs[p.id])}</td>
               <td>{p.benchmark}</td>
               <td>{p.engine}</td>
               <td>{p.createdOn}</td>
@@ -183,8 +188,11 @@ export default function Home() {
             ? <DecisionCard d={todays} onDecide={decide} />
             : <p>None yet. <button onClick={generate}>Generate recommendation</button> or wait for the nightly run.</p>}
 
-          <h3>History</h3>
-          {decisions.filter((d) => d !== todays).map((d) => <DecisionCard key={d.id} d={d} />)}
+          {/* Native <details>: collapsed by default, toggles on click; the key collapses it again per portfolio. */}
+          <details key={selected}>
+            <summary>History ({decisions.filter((d) => d !== todays).length})</summary>
+            {decisions.filter((d) => d !== todays).map((d) => <DecisionCard key={d.id} d={d} />)}
+          </details>
 
           <h3>Equity vs {detail.portfolio.benchmark} (rebased to the deposit)</h3>
           <table>

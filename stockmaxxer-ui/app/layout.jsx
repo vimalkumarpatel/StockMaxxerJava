@@ -10,6 +10,7 @@ const css = `
   .selected { background: #eef4ff; }
   .card { border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
   .error { color: #b00020; }
+  summary { font-size: 1.17em; font-weight: bold; margin: 1em 0; cursor: pointer; }
   .link { background: none; border: none; padding: 0; color: #0645ad; cursor: pointer; text-decoration: underline; font: inherit; }
 `;
 
