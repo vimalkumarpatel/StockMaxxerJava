@@ -137,6 +137,36 @@ names the risks; the code decides the weights.
 
 The web app and `scripts/nightly.sh` need neither.
 
+## Backtests and evals
+
+Both are read-only jobs over the revealed days. They use the same engines, signals and replay cache as the
+live run, so they make no API calls once `scripts/fetch.sh` has run.
+
+**Backtest** (`--job=backtest --benchmark=QQQ --from=2025-03-03`): each day, each engine's target is filled at
+the next open and marked at that day's close, as if every recommendation were accepted. Fills follow the
+settle job's rule: fractional shares rounded down, no costs. Next to the engines is the benchmark, bought at
+the first fill and held. It prints the end NAV, return, largest fall from a peak, and average cash.
+
+```
+QQQ universe, 2025-03-03 to 2026-01-05
+                            end NAV    return  max drawdown  avg cash
+quant_only                  1601.31   +60.13%        21.69%     2.00%
+quant_llm                   1585.55   +58.56%        20.81%     5.77%
+QQQ (buy and hold)          1250.54   +25.05%        17.12%     0.00%
+```
+
+(Only NVDA's filings were scored for that run. Treat it as a format example, not a result.)
+
+**Evals** (`--job=evals`): does a filing's severity say anything about what the stock does next?
+- **One row per filing, never per event.** A filing's ~10 events share one forward return, so counting it 10
+  times would invent a pattern.
+- Each row is the filing's severity (its highest verified firm-scope event, or 0) and the stock's return over
+  the next 20 trading days minus the average of all 35 stocks. The return runs from the open of the first
+  trading day after the filing.
+- Filings without a full window are left out.
+- It also prints the quote verification rate and the share of industry-scope events (dropped).
+- With a few hundred filings, the numbers are **underpowered: no alpha claim**.
+
 ## The nightly jobs
 
 Each job runs on its own: `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.jar --job=<name>`.
@@ -149,6 +179,8 @@ Each job runs on its own: `java -jar stockmaxxer-jobs/target/stockmaxxer-jobs.ja
 | `seed` | One-off: downloads daily bars from 2025-01-02 into `history`, reveals them up to 2026-01-02 and sets the simulated day there |
 | `fetch` | Downloads the bars that are new since the last fetch, up to yesterday (`scripts/fetch.sh`) |
 | `filings` | Downloads and stores the 10-K and 10-Q filings not stored yet (`scripts/fetch.sh`) |
+| `backtest` | `--benchmark=SPY --from=2026-01-02`: both engines and buy-and-hold of the benchmark over the revealed days (see below) |
+| `evals` | Severity against the next 20 trading days' excess return, one row per filing (see below) |
 | `signals` | Asks Claude about the new risk factors of every filing not scored yet, through the replay cache (`scripts/fetch.sh`) |
 | `advance` | Moves the simulated day to the next day SPY traded (real holidays are skipped) |
 | `prices` | Reveals today: copies today's bars from `history` into `bars` |
@@ -224,7 +256,6 @@ Errors return `{"error": "..."}`:
 ## Not built yet
 
 These are covered by the long-term plan:
-- backtests and evals
 - the audit trail
 
 ## Layout

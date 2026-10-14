@@ -1,6 +1,7 @@
 package com.stockmaxxer.jobs;
 
 import java.io.File;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -9,7 +10,9 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+import com.stockmaxxer.Backtest;
 import com.stockmaxxer.Edgar;
+import com.stockmaxxer.Evals;
 import com.stockmaxxer.Market;
 import com.stockmaxxer.Portfolios;
 import com.stockmaxxer.Signals;
@@ -24,18 +27,22 @@ import com.stockmaxxer.Signals;
 @SpringBootApplication(scanBasePackages = "com.stockmaxxer")
 public class Jobs implements ApplicationRunner {
 
-    static final String JOBS = "seed|fetch|filings|signals|advance|prices|expire|settle|mark|propose";
+    static final String JOBS = "seed|fetch|filings|signals|advance|prices|expire|settle|mark|propose|backtest|evals";
 
     private final Market market;
     private final Portfolios portfolios;
     private final Edgar edgar;
     private final Signals signals;
+    private final Backtest backtest;
+    private final Evals evals;
 
-    public Jobs(Market market, Portfolios portfolios, Edgar edgar, Signals signals) {
+    public Jobs(Market market, Portfolios portfolios, Edgar edgar, Signals signals, Backtest backtest, Evals evals) {
         this.market = market;
         this.portfolios = portfolios;
         this.edgar = edgar;
         this.signals = signals;
+        this.backtest = backtest;
+        this.evals = evals;
     }
 
     public static void main(String[] args) {
@@ -68,8 +75,26 @@ public class Jobs implements ApplicationRunner {
                     + market.today() + " open";
             case "mark" -> "marked " + portfolios.markAll() + " portfolio(s) at the " + market.today() + " close";
             case "propose" -> "proposed " + portfolios.proposeAll() + " recommendation(s) for " + market.today();
+            case "backtest" -> backtest(option(args, "benchmark", "SPY"), LocalDate.parse(option(args, "from", "2026-01-02")));
+            case "evals" -> "\n" + String.join("\n", evals.report());
             default -> throw new IllegalArgumentException("unknown job '" + job.getFirst() + "'; expected " + JOBS);
         };
         System.out.println("[" + job.getFirst() + "] " + result);
+    }
+
+    /** The backtest as a table: one line per leg. */
+    private String backtest(String benchmark, LocalDate from) {
+        StringBuilder out = new StringBuilder(benchmark + " universe, " + from + " to " + market.today() + "\n");
+        out.append("%-24s %10s %9s %13s %9s%n".formatted("", "end NAV", "return", "max drawdown", "avg cash"));
+        for (Backtest.Result r : backtest.run(benchmark, from)) {
+            out.append("%-24s %10s %+8.2f%% %12.2f%% %8.2f%%%n".formatted(r.name(), r.endNav(),
+                    r.totalReturn().movePointRight(2), r.maxDrawdown().movePointRight(2), r.averageCash().movePointRight(2)));
+        }
+        return out.toString();
+    }
+
+    private static String option(ApplicationArguments args, String name, String fallback) {
+        List<String> values = args.getOptionValues(name);
+        return values == null || values.isEmpty() ? fallback : values.getFirst();
     }
 }

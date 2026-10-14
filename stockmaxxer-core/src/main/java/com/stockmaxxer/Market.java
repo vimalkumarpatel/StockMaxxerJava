@@ -135,6 +135,13 @@ public class Market {
         return oldestFirst;
     }
 
+    /** The revealed trading days from {@code from} to {@code to}, both included, oldest first. */
+    public List<LocalDate> tradingDays(LocalDate from, LocalDate to) {
+        return db.sql("SELECT trade_date FROM bars WHERE symbol = 'SPY' AND trade_date BETWEEN ? AND ? ORDER BY trade_date")
+                .params(from.toString(), to.toString())
+                .query((rs, row) -> LocalDate.parse(rs.getString(1))).list();
+    }
+
     /** Every stock in any universe, plus the benchmarks themselves, each once. */
     public static List<String> allSymbols() {
         TreeSet<String> all = new TreeSet<>(BENCHMARKS);
