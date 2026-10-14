@@ -4,9 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,10 +18,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import com.stockmaxxer.Model.Decision;
 import com.stockmaxxer.Model.EquityPoint;
-import com.stockmaxxer.Model.Holding;
 import com.stockmaxxer.Model.Line;
 import com.stockmaxxer.Model.Portfolio;
 import com.stockmaxxer.Model.PortfolioDetail;
+import com.stockmaxxer.Model.Position;
 import com.stockmaxxer.Model.Status;
 
 class LifecycleTest {
@@ -73,10 +77,50 @@ class LifecycleTest {
         assertThat(after.holdings()).hasSize(Engines.TOP_N);
         assertThat(after.portfolio().cash()).isNotNegative();
         BigDecimal valueAtOpen = after.portfolio().cash();
-        for (Holding h : after.holdings()) {
+        for (Position h : after.holdings()) {
             valueAtOpen = valueAtOpen.add(h.shares().multiply(market.bar(h.symbol(), fillDay).open()));
         }
         assertThat(valueAtOpen).as("no costs: the value at the fill equals the deposit").isEqualByComparingTo("2500.00");
+    }
+
+    @Test
+    void holdingsShowMarketValueAverageCostBasisAndShareOfNav() {
+        Portfolio p = portfolios.create("Basis", null, null, Engines.QUANT_ONLY);
+        portfolios.accept(p.id(), portfolios.propose(p.id()).id());
+        TestDb.nextDay(world);
+        portfolios.settleAll();
+        LocalDate firstFill = market.today();
+
+        PortfolioDetail afterFirst = portfolios.detail(p.id());
+        Map<String, Position> first = afterFirst.holdings().stream()
+                .collect(Collectors.toMap(Position::symbol, Function.identity()));
+        BigDecimal totalCost = BigDecimal.ZERO;
+        BigDecimal totalWeight = afterFirst.cashWeight();
+        for (Position h : first.values()) {
+            assertThat(h.marketValue()).isEqualByComparingTo(h.shares().multiply(market.bar(h.symbol(), firstFill).close()));
+            assertThat(h.costBasis()).as("first fill: basis is what was paid at the open")
+                    .isEqualByComparingTo(h.shares().multiply(market.bar(h.symbol(), firstFill).open()));
+            totalCost = totalCost.add(h.costBasis());
+            totalWeight = totalWeight.add(h.weight());
+        }
+        assertThat(totalCost.add(afterFirst.portfolio().cash())).isEqualByComparingTo("1000.00");
+        assertThat(totalWeight).isCloseTo(BigDecimal.ONE, org.assertj.core.api.Assertions.within(new BigDecimal("0.00001")));
+
+        // A second accepted recommendation rebalances: average cost on every name.
+        portfolios.accept(p.id(), portfolios.propose(p.id()).id());
+        TestDb.nextDay(world);
+        portfolios.settleAll();
+        LocalDate secondFill = market.today();
+        for (Position h : portfolios.detail(p.id()).holdings()) {
+            Position before = first.get(h.symbol());
+            BigDecimal open = market.bar(h.symbol(), secondFill).open();
+            BigDecimal expected = before == null
+                    ? h.shares().multiply(open)                                                   // a new name
+                    : h.shares().compareTo(before.shares()) >= 0
+                            ? before.costBasis().add(h.shares().subtract(before.shares()).multiply(open))   // bought more
+                            : before.costBasis().multiply(h.shares()).divide(before.shares(), 10, RoundingMode.HALF_EVEN);  // sold some
+            assertThat(h.costBasis()).as("average cost basis of %s", h.symbol()).isEqualByComparingTo(expected);
+        }
     }
 
     @Test

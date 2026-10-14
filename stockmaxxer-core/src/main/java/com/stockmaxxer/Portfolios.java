@@ -23,6 +23,7 @@ import com.stockmaxxer.Model.Holding;
 import com.stockmaxxer.Model.Line;
 import com.stockmaxxer.Model.Portfolio;
 import com.stockmaxxer.Model.PortfolioDetail;
+import com.stockmaxxer.Model.Position;
 import com.stockmaxxer.Model.Status;
 
 /**
@@ -104,7 +105,16 @@ public class Portfolios {
         Portfolio p = get(id);
         LocalDate today = market.today();
         List<Holding> holdings = holdings(id);
-        return new PortfolioDetail(p, holdings, nav(p.cash(), holdings, today, false), today);
+        BigDecimal nav = nav(p.cash(), holdings, today, false);
+        Map<String, Lot> lots = replayFills(p);
+        List<Position> positions = holdings.stream().map(h -> {
+            BigDecimal value = h.shares().multiply(market.bar(h.symbol(), today).close());
+            Lot lot = lots.get(h.symbol());
+            return new Position(h.symbol(), h.shares(), value, lot == null ? null : lot.cost(),
+                    value.divide(nav, Engines.WEIGHT_SCALE, RoundingMode.HALF_EVEN));
+        }).toList();
+        return new PortfolioDetail(p, positions, nav,
+                p.cash().divide(nav, Engines.WEIGHT_SCALE, RoundingMode.HALF_EVEN), today);
     }
 
     /** Simplification: archiving sets a flag, with no timestamp since nothing reads one. History is kept; jobs skip it. */
@@ -243,12 +253,41 @@ public class Portfolios {
         return ids.size();
     }
 
-    /** No transaction costs (removed system-wide). Shares round down, so cash never goes negative. */
     private void settle(Decision d, LocalDate day) {
         Portfolio p = get(d.portfolioId());
-        BigDecimal navAtOpen = nav(p.cash(), holdings(p.id()), day, true);
-        BigDecimal invested = BigDecimal.ZERO;
+        Map<String, Lot> lots = new TreeMap<>();
+        for (Holding h : holdings(p.id())) {
+            lots.put(h.symbol(), new Lot(h.shares(), BigDecimal.ZERO));   // cost isn't stored; settle only needs shares
+        }
+        BigDecimal cash = rebalance(p.cash(), lots, d, day);
         db.sql("DELETE FROM holdings WHERE portfolio_id = ?").param(p.id()).update();
+        for (var e : lots.entrySet()) {
+            db.sql("INSERT INTO holdings (portfolio_id, symbol, shares) VALUES (?, ?, ?)")
+                    .params(p.id(), e.getKey(), e.getValue().shares().toPlainString())
+                    .update();
+        }
+        db.sql("UPDATE portfolios SET cash = ? WHERE id = ?").params(cash.toPlainString(), p.id()).update();
+        db.sql("UPDATE decisions SET status = 'FILLED', fill_date = ? WHERE id = ?")
+                .params(day.toString(), d.id())
+                .update();
+    }
+
+    /** A position's shares and what was paid for them. */
+    private record Lot(BigDecimal shares, BigDecimal cost) {}
+
+    /**
+     * One fill: rebalance {@code lots} to the decision's target weights at {@code day}'s open and return the
+     * new cash. No transaction costs (removed system-wide). Shares round down, so cash never goes negative.
+     * Cost basis uses the average-cost method: buying adds what was paid, selling removes the sold
+     * fraction of the basis. Shared by the settle job and by {@link #replayFills}, so the two can't drift apart.
+     */
+    private BigDecimal rebalance(BigDecimal cash, Map<String, Lot> lots, Decision d, LocalDate day) {
+        BigDecimal navAtOpen = cash;
+        for (var e : lots.entrySet()) {
+            navAtOpen = navAtOpen.add(e.getValue().shares().multiply(market.bar(e.getKey(), day).open()));
+        }
+        Map<String, Lot> next = new TreeMap<>();
+        BigDecimal invested = BigDecimal.ZERO;
         for (Line line : d.lines()) {
             if (line.symbol().equals(Engines.CASH) || line.targetWeight().signum() == 0) {
                 continue;
@@ -256,17 +295,35 @@ public class Portfolios {
             BigDecimal open = market.bar(line.symbol(), day).open();
             // Fractional shares, as in the original: $1,000 can't buy whole shares of every name.
             BigDecimal shares = line.targetWeight().multiply(navAtOpen).divide(open, 6, RoundingMode.DOWN);
+            Lot old = lots.getOrDefault(line.symbol(), new Lot(BigDecimal.ZERO, BigDecimal.ZERO));
+            BigDecimal cost = shares.compareTo(old.shares()) >= 0
+                    ? old.cost().add(shares.subtract(old.shares()).multiply(open))           // bought more at this open
+                    : old.cost().multiply(shares).divide(old.shares(), 10, RoundingMode.HALF_EVEN);   // sold some
+            next.put(line.symbol(), new Lot(shares, cost));
             invested = invested.add(shares.multiply(open));
-            db.sql("INSERT INTO holdings (portfolio_id, symbol, shares) VALUES (?, ?, ?)")
-                    .params(p.id(), line.symbol(), shares.toPlainString())
-                    .update();
         }
-        db.sql("UPDATE portfolios SET cash = ? WHERE id = ?")
-                .params(navAtOpen.subtract(invested).toPlainString(), p.id())
-                .update();
-        db.sql("UPDATE decisions SET status = 'FILLED', fill_date = ? WHERE id = ?")
-                .params(day.toString(), d.id())
-                .update();
+        lots.clear();
+        lots.putAll(next);
+        return navAtOpen.subtract(invested);
+    }
+
+    /**
+     * Simplification: cost basis is derived by replaying the portfolio's fills, oldest first, through the
+     * same {@link #rebalance} the settle job uses, instead of being stored. It needs no schema change or
+     * migration, and at this scale the replay is instant.
+     */
+    private Map<String, Lot> replayFills(Portfolio p) {
+        Map<String, Lot> lots = new TreeMap<>();
+        BigDecimal cash = p.initialDeposit();
+        List<Long> filled = db.sql("""
+                SELECT id FROM decisions WHERE portfolio_id = ? AND status = 'FILLED'
+                ORDER BY fill_date, id""")
+                .param(p.id()).query(Long.class).list();
+        for (long id : filled) {
+            Decision d = decision(id);
+            cash = rebalance(cash, lots, d, d.fillDate());
+        }
+        return lots;
     }
 
     /** The mark job: value every active portfolio at today's close, one point on its equity curve. */

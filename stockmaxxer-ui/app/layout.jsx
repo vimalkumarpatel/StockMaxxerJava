@@ -10,6 +10,7 @@ const css = `
   .selected { background: #eef4ff; }
   .card { border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
   .error { color: #b00020; }
+  .total td { font-weight: 600; border-top: 1px solid #c3c2b7; }
   summary { font-size: 1.17em; font-weight: bold; margin: 1em 0; cursor: pointer; }
   summary.small { font-size: 14px; font-weight: normal; margin: 4px 0; color: #52514e; }
   .chart { position: relative; max-width: 760px; }

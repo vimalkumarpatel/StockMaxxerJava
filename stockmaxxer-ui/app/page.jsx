@@ -178,8 +178,19 @@ export default function Home() {
           </p>
           {detail.holdings.length > 0 && (
             <table>
-              <thead><tr><th>Holding</th><th>Shares</th></tr></thead>
-              <tbody>{detail.holdings.map((h) => <tr key={h.symbol}><td>{h.symbol}</td><td>{h.shares}</td></tr>)}</tbody>
+              <thead>
+                <tr><th>Holding</th><th>Shares</th><th>Market value</th><th>Cost basis</th><th>% of NAV</th></tr>
+              </thead>
+              <tbody>
+                {detail.holdings.map((h) => (
+                  <tr key={h.symbol}>
+                    <td>{h.symbol}</td><td>{h.shares}</td><td>{money(h.marketValue)}</td>
+                    <td>{money(h.costBasis)}</td><td>{pct(h.weight)}</td>
+                  </tr>
+                ))}
+                <tr><td>Cash</td><td /><td>{money(detail.portfolio.cash)}</td><td /><td>{pct(detail.cashWeight)}</td></tr>
+                <tr className="total"><td>Total (NAV)</td><td /><td>{money(detail.nav)}</td><td /><td>100.00%</td></tr>
+              </tbody>
             </table>
           )}
 

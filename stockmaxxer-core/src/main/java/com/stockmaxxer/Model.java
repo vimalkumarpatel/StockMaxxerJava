@@ -17,8 +17,13 @@ public final class Model {
 
     public record Holding(String symbol, BigDecimal shares) {}
 
+    /** A holding valued at the simulated day's close: market value, average cost basis, and its share of NAV. */
+    public record Position(String symbol, BigDecimal shares, BigDecimal marketValue, BigDecimal costBasis,
+                           BigDecimal weight) {}
+
     /** A portfolio with its holdings, valued at the simulated day's close. */
-    public record PortfolioDetail(Portfolio portfolio, List<Holding> holdings, BigDecimal nav, LocalDate navDate) {}
+    public record PortfolioDetail(Portfolio portfolio, List<Position> holdings, BigDecimal nav, BigDecimal cashWeight,
+                                  LocalDate navDate) {}
 
     public record Line(String symbol, BigDecimal priorWeight, BigDecimal targetWeight, int severity, String action) {}
 

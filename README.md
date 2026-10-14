@@ -68,7 +68,7 @@ strings so they stay exact.
 |---|---|---|
 | POST | `/portfolios` | `{"name", "initialDeposit"?, "benchmark"?, "engine"?}` |
 | GET | `/portfolios[?includeArchived=true]` | list |
-| GET | `/portfolios/{id}` | with holdings, cash and NAV |
+| GET | `/portfolios/{id}` | With cash, NAV and holdings. Each holding has shares, market value (at the simulated day's close), average cost basis and % of NAV |
 | DELETE | `/portfolios/{id}` | archive (soft delete) |
 | POST | `/portfolios/{id}/restore` | un-archive |
 | POST | `/portfolios/{id}/recommendations` | generate today's recommendation now |
@@ -104,6 +104,7 @@ Errors return `{"error": "..."}`:
 | Beta / alpha / IR against the benchmark | Equity table with the benchmark rebased to the deposit | Shows the chosen benchmark with no statistics code |
 | A look-ahead guard | Future bars don't exist until the `prices` job writes them | Point-in-time holds by construction |
 | `archived_at` timestamp | An `archived` flag | Nothing reads the time |
+| Tax lots and stored cost basis | **Average-cost** basis, derived on each request by replaying the portfolio's fills through the same rebalance code the settle job uses | No schema change or migration, and existing portfolios get a basis straight away; at this scale the replay is instant |
 
 **Kept from the original design:**
 - `BigDecimal` everywhere, stored as TEXT because SQLite has no exact decimal type.
