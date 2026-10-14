@@ -22,7 +22,7 @@ import org.sqlite.SQLiteDataSource;
  */
 final class TestDb {
 
-    record World(JdbcClient db, Market market, Portfolios portfolios) {}
+    record World(JdbcClient db, Market market, Signals signals, Portfolios portfolios, Llm llm) {}
 
     static final LocalDate FIRST_DAY = LocalDate.of(2025, 11, 3);   // a Monday
     static final int DAYS = 80;                                      // weekdays of fixture history
@@ -39,7 +39,10 @@ final class TestDb {
         Market market = new Market(db, tx, new Yahoo());   // Yahoo is never called in tests
         LocalDate start = writeHistory(db);
         market.startAt(start);
-        return new World(db, market, new Portfolios(db, market, tx));
+        // Replay only, with the cache in the test's temp folder: a test can never call Claude.
+        Llm llm = new Llm(dir.toString(), true, "test-model", "");
+        Signals signals = new Signals(db, llm, tx);
+        return new World(db, market, signals, new Portfolios(db, market, signals, tx), llm);
     }
 
     /** The market side of a night: a new simulated day and its bars. */

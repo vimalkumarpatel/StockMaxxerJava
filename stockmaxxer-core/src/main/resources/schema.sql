@@ -81,3 +81,36 @@ CREATE TABLE IF NOT EXISTS equity (
   nav          TEXT NOT NULL,
   PRIMARY KEY (portfolio_id, trade_date)
 );
+
+-- One 10-K or 10-Q, stored complete: text is the whole document as normalized plain text (later signals can
+-- use any part of it), and item1a is the Risk Factors section cut from it. The raw document is kept in
+-- data/filings/{accession}.htm.gz. scored = 1 once the signals job has read the filing.
+CREATE TABLE IF NOT EXISTS filings (
+  accession TEXT PRIMARY KEY,
+  symbol    TEXT NOT NULL,
+  cik       INTEGER NOT NULL,
+  form      TEXT NOT NULL,
+  filed_on  TEXT NOT NULL,
+  doc_url   TEXT NOT NULL,
+  text      TEXT NOT NULL,
+  item1a    TEXT NOT NULL,
+  scored    INTEGER NOT NULL DEFAULT 0,
+  -- Set by the signals job: how many Item 1A sentences were new, and the replay-cache key and the model
+  -- that actually answered (NULL when nothing was new, so Claude was not asked).
+  new_sentences INTEGER,
+  llm_key       TEXT,
+  llm_model     TEXT
+);
+CREATE INDEX IF NOT EXISTS filings_by_symbol ON filings (symbol, form, filed_on);
+
+-- The risks Claude found in one filing's new Item 1A sentences. scope is 'firm' or 'industry'; only firm-scope
+-- events can trim a weight. quote is the sentence Claude says it read the risk in.
+CREATE TABLE IF NOT EXISTS events (
+  accession TEXT NOT NULL REFERENCES filings (accession),
+  n         INTEGER NOT NULL,
+  type      TEXT NOT NULL,
+  severity  INTEGER NOT NULL,
+  scope     TEXT NOT NULL,
+  quote     TEXT NOT NULL,
+  PRIMARY KEY (accession, n)
+);

@@ -9,8 +9,10 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+import com.stockmaxxer.Edgar;
 import com.stockmaxxer.Market;
 import com.stockmaxxer.Portfolios;
+import com.stockmaxxer.Signals;
 
 /**
  * Every subsystem of the nightly pipeline as an independently runnable job:
@@ -22,14 +24,18 @@ import com.stockmaxxer.Portfolios;
 @SpringBootApplication(scanBasePackages = "com.stockmaxxer")
 public class Jobs implements ApplicationRunner {
 
-    static final String JOBS = "seed|fetch|advance|prices|expire|settle|mark|propose";
+    static final String JOBS = "seed|fetch|filings|signals|advance|prices|expire|settle|mark|propose";
 
     private final Market market;
     private final Portfolios portfolios;
+    private final Edgar edgar;
+    private final Signals signals;
 
-    public Jobs(Market market, Portfolios portfolios) {
+    public Jobs(Market market, Portfolios portfolios, Edgar edgar, Signals signals) {
         this.market = market;
         this.portfolios = portfolios;
+        this.edgar = edgar;
+        this.signals = signals;
     }
 
     public static void main(String[] args) {
@@ -53,6 +59,8 @@ public class Jobs implements ApplicationRunner {
                 yield "seeded; the simulated day is " + market.today();
             }
             case "fetch" -> "downloaded " + market.fetch() + " new bar(s)";
+            case "filings" -> "stored " + edgar.download() + " new filing(s)";
+            case "signals" -> "scored " + signals.scoreAll() + " filing(s)";
             case "advance" -> "the simulated day is now " + market.advance();
             case "prices" -> "revealed " + market.reveal(market.today()) + " bar(s) for " + market.today();
             case "expire" -> "expired " + portfolios.expireAll() + " unaccepted recommendation(s)";

@@ -41,11 +41,13 @@ public class Portfolios {
 
     private final JdbcClient db;
     private final Market market;
+    private final Signals signals;
     private final TransactionTemplate tx;
 
-    public Portfolios(JdbcClient db, Market market, TransactionTemplate tx) {
+    public Portfolios(JdbcClient db, Market market, Signals signals, TransactionTemplate tx) {
         this.db = db;
         this.market = market;
+        this.signals = signals;
         this.tx = tx;
     }
 
@@ -152,7 +154,8 @@ public class Portfolios {
             List<Holding> holdings = holdings(id);
             BigDecimal nav = nav(p.cash(), holdings, today, false);
             Map<String, BigDecimal> prior = currentWeights(p.cash(), holdings, nav, today);
-            Engines.Target target = Engines.target(p.engine(), today, market, Market.UNIVERSES.get(p.benchmark()));
+            List<String> universe = Market.UNIVERSES.get(p.benchmark());
+            Engines.Target target = Engines.target(p.engine(), today, market, universe, signals.flags(universe, today));
 
             db.sql("INSERT INTO decisions (portfolio_id, as_of, engine, status, nav) VALUES (?, ?, ?, ?, ?)")
                     .params(id, today.toString(), p.engine(), Status.PROPOSED.name(), nav.toPlainString())

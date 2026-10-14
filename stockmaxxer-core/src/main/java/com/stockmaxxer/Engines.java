@@ -9,8 +9,6 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -25,8 +23,8 @@ public final class Engines {
     public static final String CASH = "CASH";
 
     public static final List<EngineInfo> ALL = List.of(
-            new EngineInfo(QUANT_LLM, "quant_only, then SIMULATED severity trims (a stand-in for the "
-                    + "filing-diff LLM layer); trimmed weight goes to cash, capped at 15%"),
+            new EngineInfo(QUANT_LLM, "quant_only, then trims for new risks in each stock's latest 10-K or 10-Q "
+                    + "(read by Claude); trimmed weight goes to cash, capped at 15%"),
             new EngineInfo(QUANT_ONLY, "Top 8 of the benchmark's 12 largest holdings by 20-day return, weights proportional to "
                     + "1/volatility, 2% cash"));
 
@@ -48,10 +46,11 @@ public final class Engines {
     /**
      * Target weights by symbol, including CASH, plus the facts behind them that the explanations use:
      * every eligible stock ranked by 20-day price change, the names held at the 15% cap, the severity
-     * behind each trim, and the scale applied to the trims when the cash cap bound (1 if it didn't).
+     * behind each trim and the filing it came from, and the scale applied to the trims when the cash cap
+     * bound (1 if it didn't).
      */
-    public record Target(Map<String, BigDecimal> weights, Map<String, Integer> severity, List<Stat> ranked,
-                         Set<String> capped, BigDecimal trimScale) {}
+    public record Target(Map<String, BigDecimal> weights, Map<String, Integer> severity, Map<String, Signals.Flag> flags,
+                         List<Stat> ranked, Set<String> capped, BigDecimal trimScale) {}
 
     /** quant_only's weights (without CASH), the ranking they came from, and the names pinned at the cap. */
     record Base(Map<String, BigDecimal> weights, List<Stat> ranked, Set<String> capped) {}
@@ -65,15 +64,19 @@ public final class Engines {
         return ALL.stream().anyMatch(e -> e.id().equals(engine));
     }
 
-    /** Target weights for one universe (the portfolio's benchmark picks it). */
-    public static Target target(String engine, LocalDate asOf, Market market, List<String> universe) {
+    /** Target weights for one universe (the portfolio's benchmark picks it). {@code flags} are the filing signals on asOf. */
+    public static Target target(String engine, LocalDate asOf, Market market, List<String> universe,
+                                Map<String, Signals.Flag> flags) {
         Base base = quantOnly(asOf, market, universe);
         Weights w = switch (engine) {
             case QUANT_ONLY -> withCash(base.weights(), Map.of(), BigDecimal.ONE);
-            case QUANT_LLM -> trimmed(base.weights(), asOf);
+            case QUANT_LLM -> trimmed(base.weights(), flags);
             default -> throw new IllegalArgumentException("unknown engine: " + engine);
         };
-        return new Target(w.weights(), w.severity(), base.ranked(), base.capped(), w.trimScale());
+        Map<String, Signals.Flag> used = new TreeMap<>(flags);
+        used.keySet().retainAll(w.severity().keySet());   // only the flags that trimmed a held name
+        used.values().removeIf(f -> f.severity() == 0);
+        return new Target(w.weights(), w.severity(), used, base.ranked(), base.capped(), w.trimScale());
     }
 
     /** Rank by 20-day return, keep the top 8, weight each in proportion to 1/volatility, scaled to 0.98, capped at 15%. */
@@ -137,16 +140,15 @@ public final class Engines {
     }
 
     /**
-     * quant_llm. Simplification: a SIMULATED severity (0-5) per symbol and day stands in for the
-     * filing-diff LLM layer, which this slice doesn't build. The rules around it are the real design's:
-     * a trim can only lower a weight, trimmed weight becomes cash, and cash is capped at 15% by scaling
-     * every trim down pro-rata.
+     * quant_llm: each name's severity (0-5, from its latest filing) trims its weight. A trim can only lower a
+     * weight, trimmed weight becomes cash, and cash is capped at 15% by scaling every trim down pro-rata.
      */
-    static Weights trimmed(Map<String, BigDecimal> base, LocalDate asOf) {
+    static Weights trimmed(Map<String, BigDecimal> base, Map<String, Signals.Flag> flags) {
         Map<String, Integer> severity = new TreeMap<>();
         Map<String, BigDecimal> trim = new TreeMap<>();
         for (var e : base.entrySet()) {
-            int s = simulatedSeverity(e.getKey(), asOf);
+            Signals.Flag flag = flags.get(e.getKey());
+            int s = flag == null ? 0 : flag.severity();
             severity.put(e.getKey(), s);
             trim.put(e.getKey(), e.getValue().multiply(TRIM_PER_SEVERITY).multiply(BigDecimal.valueOf(s)));
         }
@@ -162,11 +164,6 @@ public final class Engines {
             weights.put(e.getKey(), w.setScale(WEIGHT_SCALE, RoundingMode.UP));
         }
         return withCash(weights, severity, scale);
-    }
-
-    static int simulatedSeverity(String symbol, LocalDate asOf) {
-        Random rng = new Random(Objects.hash("severity", symbol, asOf.toEpochDay()));
-        return rng.nextInt(10) < 7 ? 0 : 1 + rng.nextInt(5);   // about 70% of days carry no event
     }
 
     /** Cash is the residual, so the weights including CASH sum to exactly 1 by construction. */

@@ -33,9 +33,10 @@ final class Explanations {
 
     /** Why the stock has this part of the portfolio: a risk trim, the cap, or how much its price moves. */
     private static String size(String symbol, Engines.Stat stat, Engines.Target t) {
-        int severity = t.severity().getOrDefault(symbol, 0);
-        if (severity > 0) {
-            return "A simulated risk check gives it risk level " + severity + " of 5, so the system makes its part smaller.";
+        Signals.Flag flag = t.flags().get(symbol);
+        if (flag != null) {
+            return "Its " + flag.form() + " of " + flag.filedOn() + " adds a risk at level " + flag.severity()
+                    + " of 5, so the system makes its part smaller.";
         }
         if (t.capped().contains(symbol)) {
             return "Its part is at the " + limit(Engines.NAME_CAP) + " limit for one stock.";

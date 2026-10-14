@@ -363,7 +363,7 @@ function DecisionCard({ d, onDecide }) {
         <thead>
           <tr>
             <th>Symbol</th><th>Current</th><th>Target</th><th>Action</th>
-            <th>{d.engine === 'quant_llm' ? 'Severity (simulated)' : ''}</th><th>Explanation</th>
+            <th>{d.engine === 'quant_llm' ? 'Severity' : ''}</th><th>Explanation</th>
           </tr>
         </thead>
         <tbody>
