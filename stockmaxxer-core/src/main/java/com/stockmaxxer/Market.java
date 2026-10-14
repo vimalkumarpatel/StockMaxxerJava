@@ -56,13 +56,19 @@ public class Market {
                 .orElseThrow(() -> new IllegalStateException("no simulated day yet: run the seed job first"));
     }
 
-    /** The advance job: move the clock to the next day that SPY traded, so real holidays are skipped. */
+    /**
+     * The advance job: move the clock to the next day that SPY traded, so real holidays are skipped, and reveal
+     * that day's bars. One transaction, so a reader (the UI) never sees a day without its bars.
+     */
     public LocalDate advance() {
-        LocalDate next = db.sql("SELECT MIN(trade_date) FROM history WHERE symbol = 'SPY' AND trade_date > ?")
-                .param(today().toString()).query(String.class).optional().map(LocalDate::parse)
-                .orElseThrow(() -> new IllegalStateException("no newer day in history: run the fetch job"));
-        db.sql("UPDATE sim_clock SET today = ? WHERE id = 1").param(next.toString()).update();
-        return next;
+        return tx.execute(status -> {
+            LocalDate next = db.sql("SELECT MIN(trade_date) FROM history WHERE symbol = 'SPY' AND trade_date > ?")
+                    .param(today().toString()).query(String.class).optional().map(LocalDate::parse)
+                    .orElseThrow(() -> new IllegalStateException("no newer day in history: run the fetch job"));
+            db.sql("UPDATE sim_clock SET today = ? WHERE id = 1").param(next.toString()).update();
+            reveal(next);
+            return next;
+        });
     }
 
     /** The seed job: download the history, then start the clock at START. Does nothing if already seeded. */
