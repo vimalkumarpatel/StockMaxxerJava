@@ -1,0 +1,32 @@
+package com.stockmaxxer;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+
+/** The domain records. Money, weights and shares are exact BigDecimals throughout. */
+public final class Model {
+
+    private Model() {}
+
+    /** PROPOSED → ACCEPTED → FILLED, or PROPOSED → IGNORED / EXPIRED. Only FILLED changes holdings. */
+    public enum Status { PROPOSED, ACCEPTED, FILLED, IGNORED, EXPIRED }
+
+    public record Portfolio(long id, String name, BigDecimal initialDeposit, BigDecimal cash,
+                            String benchmark, String engine, LocalDate createdOn, boolean archived) {}
+
+    public record Holding(String symbol, BigDecimal shares) {}
+
+    /** A portfolio with its holdings, valued at the simulated day's close. */
+    public record PortfolioDetail(Portfolio portfolio, List<Holding> holdings, BigDecimal nav, LocalDate navDate) {}
+
+    public record Line(String symbol, BigDecimal priorWeight, BigDecimal targetWeight, int severity, String action) {}
+
+    public record Decision(long id, long portfolioId, LocalDate asOf, String engine, Status status,
+                           BigDecimal nav, LocalDate fillDate, List<Line> lines) {}
+
+    /** Portfolio NAV next to the chosen benchmark, rebased so both start at the deposit. */
+    public record EquityPoint(LocalDate date, BigDecimal nav, BigDecimal benchmark) {}
+
+    public record EngineInfo(String id, String description) {}
+}

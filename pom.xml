@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.16</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.stockmaxxer</groupId>
+  <artifactId>stockmaxxer-java</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+
+  <properties>
+    <!-- Java 21 language level, compiled by whatever newer JDK is installed (here JDK 26). -->
+    <java.version>21</java.version>
+    <sqlite-jdbc.version>3.53.4.0</sqlite-jdbc.version>
+  </properties>
+
+  <!-- Simplification: 3 modules instead of the 11 in the long-term plan. app and jobs are still
+       separate runnables; more modules split out of core when their subsystems get built. -->
+  <modules>
+    <module>stockmaxxer-core</module>
+    <module>stockmaxxer-app</module>
+    <module>stockmaxxer-jobs</module>
+  </modules>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <configuration>
+            <archive>
+              <manifestEntries>
+                <!-- sqlite-jdbc loads a native library; JDK 24+ warns on every start without this. -->
+                <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+              </manifestEntries>
+            </archive>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.stockmaxxer</groupId>
+        <artifactId>stockmaxxer-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.xerial</groupId>
+        <artifactId>sqlite-jdbc</artifactId>
+        <version>${sqlite-jdbc.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>

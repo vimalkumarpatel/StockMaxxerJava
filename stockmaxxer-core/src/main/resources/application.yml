@@ -1,0 +1,15 @@
+# Shared by the web app and the jobs, so both point at the same database file.
+spring:
+  datasource:
+    # SM_DB_PATH keeps the Python version's SM_ env prefix. The default is relative to the working
+    # directory, so start the app and the jobs from the repo root.
+    url: jdbc:sqlite:${SM_DB_PATH:data/stockmaxxer.sqlite}?journal_mode=WAL&busy_timeout=5000
+    hikari:
+      # SQLite allows one writer at a time; one connection per process avoids lock contention.
+      maximum-pool-size: 1
+  sql:
+    init:
+      # SQLite isn't an "embedded" database to Spring Boot, so schema.sql only runs when forced.
+      mode: always
+  main:
+    banner-mode: off
