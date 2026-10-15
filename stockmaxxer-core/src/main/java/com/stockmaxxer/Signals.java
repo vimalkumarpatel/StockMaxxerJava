@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import com.anthropic.errors.AnthropicServiceException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -39,6 +40,7 @@ public class Signals {
     /**
      * The signals job: score every filing not scored yet, oldest first. One filing failing (a refused or cut-off
      * answer) doesn't stop the others, but the job still fails loudly at the end, and the next run tries it again.
+     * The API rejecting the account itself (no credits, bad key) stops the job at once: every other call would fail too.
      */
     public int scoreAll() {
         List<Filing> todo = db.sql("SELECT accession, symbol, form, filed_on, item1a FROM filings WHERE scored = 0 ORDER BY filed_on, accession")
@@ -50,6 +52,10 @@ public class Signals {
             try {
                 score(f);
             } catch (RuntimeException e) {
+                if (accountError(e)) {
+                    throw new IllegalStateException("Anthropic API rejected the account, stopping at " + f.symbol() + " "
+                            + f.form() + " " + f.accession() + ": " + e.getMessage(), e);
+                }
                 failures.add(f.symbol() + " " + f.form() + " " + f.accession() + ": " + e.getMessage());
             }
         }
@@ -93,6 +99,18 @@ public class Signals {
     static boolean verified(String quote, String item1a) {
         String q = Filings.normalizeText(quote);
         return !q.isEmpty() && item1a.contains(q);
+    }
+
+    /** An error about the account, not the filing: a bad key (401), no permission (403), or no credits left (400). */
+    static boolean accountError(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof AnthropicServiceException s) {
+                int status = s.statusCode();
+                return status == 401 || status == 403
+                        || (status == 400 && String.valueOf(s.getMessage()).contains("credit balance"));
+            }
+        }
+        return false;
     }
 
     /** How many quotes passed and failed verification, over every event stored. */

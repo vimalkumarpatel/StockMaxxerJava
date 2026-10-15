@@ -7,6 +7,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+
+import com.anthropic.core.JsonValue;
+import com.anthropic.core.http.Headers;
+import com.anthropic.errors.BadRequestException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -57,6 +62,22 @@ class SignalsTest {
         assertThat(Signals.verified("We rely on \u201cthird-party\u201d  foundries", item1a)).as("same text after normalizing").isTrue();
         assertThat(Signals.verified("We depend on third-party foundries", item1a)).as("paraphrased").isFalse();
         assertThat(Signals.verified("", item1a)).isFalse();
+    }
+
+    @Test
+    void noCreditsOrABadKeyStopsTheJobButAFilingErrorDoesNot() {
+        BadRequestException noCredits = BadRequestException.builder().headers(Headers.builder().build())
+                .body(JsonValue.from(Map.of("type", "error", "error", Map.of("type", "invalid_request_error",
+                        "message", "Your credit balance is too low to access the Anthropic API."))))
+                .build();
+        BadRequestException tooLong = BadRequestException.builder().headers(Headers.builder().build())
+                .body(JsonValue.from(Map.of("type", "error", "error", Map.of("type", "invalid_request_error",
+                        "message", "prompt is too long"))))
+                .build();
+        assertThat(Signals.accountError(noCredits)).isTrue();
+        assertThat(Signals.accountError(new IllegalStateException("wrapped", noCredits))).as("found through the cause").isTrue();
+        assertThat(Signals.accountError(tooLong)).isFalse();
+        assertThat(Signals.accountError(new IllegalStateException("incomplete answer"))).isFalse();
     }
 
     @Test
